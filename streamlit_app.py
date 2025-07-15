@@ -541,21 +541,21 @@ def main():
                 # Download button for cohort analysis
                 st.markdown(create_download_link(cohort_table, f"Cohort_Analysis_{selected_sku}.csv", "📥 Download Cohort Analysis"), unsafe_allow_html=True)
                 
-                # Additional metrics display
-                if not cohort_table.empty:
-                    st.subheader("📊 Summary Metrics")
+                # # Additional metrics display
+                # if not cohort_table.empty:
+                #     st.subheader("📊 Summary Metrics")
                     
-                    # Filter for specific metrics to show summary
-                    revenue_rows = cohort_table[cohort_table['Metric'] == 'Revenue']
-                    active_customers_rows = cohort_table[cohort_table['Metric'] == 'Active Customers']
+                #     # Filter for specific metrics to show summary
+                #     revenue_rows = cohort_table[cohort_table['Metric'] == 'Revenue']
+                #     active_customers_rows = cohort_table[cohort_table['Metric'] == 'Active Customers']
                     
-                    if not revenue_rows.empty:
-                        total_revenue = revenue_rows['Total'].sum()
-                        st.metric("Total Revenue Across All Cohorts", f"${total_revenue:,.2f}")
+                #     if not revenue_rows.empty:
+                #         total_revenue = revenue_rows['Total'].sum()
+                #         st.metric("Total Revenue Across All Cohorts", f"${total_revenue:,.2f}")
                     
-                    if not active_customers_rows.empty:
-                        total_customers = active_customers_rows['Total'].sum()
-                        st.metric("Total Active Customer Interactions", f"{total_customers:,}")
+                #     if not active_customers_rows.empty:
+                #         total_customers = active_customers_rows['Total'].sum()
+                #         st.metric("Total Active Customer Interactions", f"{total_customers:,}")
             
             # Download all results as ZIP
             st.header("📦 Download All Results")
