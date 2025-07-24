@@ -204,54 +204,74 @@ def calculate_product_summary(combined_df):
 def calculate_raw_data(combined_df):
     """Calculate RawData dataframe"""
     # Create ntb equivalent
+    # Convert SQL RawData query to pandas operations
+
+    # Step 1: Create ntb equivalent
     ntb_df = combined_df[combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01'].copy()
     ntb_df['buyer_email'] = ntb_df['buyer_email'].fillna('NA')
     ntb_df['pome_month'] = ntb_df.groupby('buyer_email', dropna=False)['purchase_date'].transform(lambda x: x.dt.strftime('%Y-%m-01').min())
     ntb = ntb_df[['buyer_email', 'pome_month']].drop_duplicates().rename(columns={'buyer_email': 'user_id'})
-    
-    # Create pntb equivalent
+
+    # Step 2: Create pntb equivalent  
     pntb_df = combined_df[combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01'].copy()
     pntb_df['pntb_title'] = pntb_df.groupby('merchant_sku', dropna=False)['title'].transform('min')
     pntb_df['pntb_month'] = pntb_df.groupby('merchant_sku', dropna=False)['purchase_date'].transform(lambda x: x.dt.strftime('%Y-%m-01').min())
     pntb = pntb_df[['merchant_sku', 'pntb_title', 'pntb_month']].drop_duplicates().rename(columns={'merchant_sku': 'tracking_id'})
-    
+
+    # Step 3: Create output_tbl equivalent
     # Filter the main dataframe
     filtered_df = combined_df[
         (combined_df['currency'] == 'USD') &
         (combined_df['item_price'] > 0) &
         (combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01')
     ].copy()
-    
+
     # Create month column
     filtered_df['month'] = filtered_df['purchase_date'].dt.strftime('%Y-%m-01')
-    
-    # Join with ntb and pntb
-    output_tbl1 = filtered_df.merge(ntb, left_on='buyer_email', right_on='user_id', how='left')
-    output_tbl = output_tbl1.merge(pntb, left_on='merchant_sku', right_on='tracking_id', how='left')
-    
+    filtered_df['buyer_email'] = filtered_df['buyer_email'].fillna('NA')
+
+    # Left join with ntb
+    output_tbl1 = filtered_df.merge(
+        ntb,
+        left_on='buyer_email',
+        right_on='user_id',
+        how='left'
+    )
+
+    # Left join with pntb
+    output_tbl = output_tbl1.merge(
+        pntb,
+        left_on='merchant_sku', 
+        right_on='tracking_id',
+        how='left'
+    )
+
     output_tbl['buyer_email'] = output_tbl['buyer_email'].fillna('NA')
     output_tbl['amazon_order_id'] = output_tbl['amazon_order_id'].fillna('NA')
-    
+
+
     # Group by and aggregate
     RawData = output_tbl.groupby(['month', 'merchant_sku', 'pntb_title', 'pome_month', 'pntb_month'], dropna=False).agg({
-        'buyer_email': 'nunique',
-        'shipped_quantity': 'sum',
-        'amazon_order_id': 'nunique',
-        'item_price': 'sum'
+        'buyer_email': 'nunique',       # users
+        'shipped_quantity': 'sum',      # quantity  
+        'amazon_order_id': 'nunique',   # orders
+        'item_price': 'sum'             # sales
     }).reset_index()
-    
+
     # Rename columns
     RawData = RawData.rename(columns={
         'buyer_email': 'users',
         'shipped_quantity': 'quantity',
-        'amazon_order_id': 'orders',
+        'amazon_order_id': 'orders', 
         'item_price': 'sales'
     })
-    
-    # Calculate derived columns
+
+    # Calculate derived columns (cast as decimal(10,2) equivalent)
     RawData['avg_per_item'] = (RawData['sales'] / RawData['quantity']).round(2)
     RawData['avg_per_order'] = (RawData['sales'] / RawData['orders']).round(2)
     RawData['avg_per_user'] = (RawData['sales'] / RawData['users']).round(2)
+
+    # Round sales to 2 decimal places (equivalent to cast as decimal(10,2))
     RawData['sales'] = RawData['sales'].round(2)
     
     return RawData
@@ -441,6 +461,86 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
     
     return filled_table, filter_msg
 
+def retention_calculation(RawData, filled_table):
+
+    df_raw_data = RawData.copy()
+    df_raw_data['month'] = pd.to_datetime(df_raw_data['month'])
+    df_raw_data['pmonth_date'] = pd.to_datetime(df_raw_data['pome_month'])
+
+    # Create a dummy df_mom_retention based on your screenshot
+    mom_retention_data = {
+        'Month': (list(filled_table['POME Month'])),
+        'Cohort': (list(filled_table['Cohort Size']))
+    }
+
+    df_mom_retention = pd.DataFrame(mom_retention_data).drop_duplicates().reset_index(drop=True)
+    df_mom_retention['Month'] = pd.to_datetime(df_mom_retention['Month'])
+
+    def calculate_retention(cohort_month, retention_month, df_raw_data):
+        """
+        Calculates the MoM retention value based on the Excel formula:
+        =IF(D$3<$B14,"",SUMIFS(RawData!$I:$I,RawData!$D:$D,$B14,RawData!$A:$A,D$3)/SUMIFS(RawData!$F:$F,RawData!$D:$D,$B14,RawData!$A:$A,D$3))
+        
+        This calculates Average Revenue Per User (ARPU) = sales/users
+
+        Args:
+            cohort_month (pd.Timestamp): The initial acquisition month of the cohort ($B14).
+            retention_month (pd.Timestamp): The month for which retention is being calculated (D$3).
+            raw_data_df (pd.DataFrame): The DataFrame containing the raw sales and users data.
+
+        Returns:
+            float or str: The retention value (sales/users) or an empty string if
+                        retention_month is before cohort_month.
+                        Returns 0 if denominator (users) is 0 to avoid division by zero.
+        """
+
+        # IF(D$3<$B14,"",...)
+        if retention_month < cohort_month:
+            return ""
+
+        # Filter raw data for the specific cohort month and retention month
+        # SUMIFS conditions: RawData!$D:$D=$B4 AND RawData!$A:$A=D$3
+        filtered_data = df_raw_data[
+            (df_raw_data['pmonth_date'] == cohort_month) &  # $D:$D=$B4 (pome_month)
+            (df_raw_data['month'] == retention_month)       # $A:$A=D$3 (month)
+        ]
+
+        # SUMIFS(RawData!$I:$I,...) = sum of sales column
+        sum_sales = filtered_data['sales'].sum()
+        
+        # SUMIFS(RawData!$F:$F,...) = sum of users column  
+        sum_users = filtered_data['users'].sum()
+
+        if sum_users == 0:
+            return 0  # To handle #DIV/0! equivalent, return 0 
+        else:
+            return sum_sales / sum_users  # This is ARPU (Average Revenue Per User)
+
+    # --- 3. Apply the function to populate the MoM Retention table ---
+
+    # Get unique cohort months from your df_mom_retention
+    cohort_months = sorted(df_mom_retention['Month'].unique())
+
+    # Instead of using all months, use only the cohort analysis months (starting from 2024-07-01)
+    # This matches the cohort table structure
+    retention_columns_str = sorted(cohort_months)  # Use the same months as cohort analysis
+    retention_columns = [pd.to_datetime(month) for month in retention_columns_str]  # Convert to datetime for comparison
+
+
+    # print(f"Cohort months: {[str(d) for d in cohort_months]}")
+    # print(f"Retention columns: {retention_columns_str}")
+
+    retention_table = pd.DataFrame(index=cohort_months, columns=retention_columns)
+    # retention_table
+    for cohort_m in cohort_months:
+        for retention_m in retention_columns_str:
+            retention_table.loc[cohort_m, retention_m] = calculate_retention(
+                cohort_m, retention_m, df_raw_data
+            )
+
+    retention_table = retention_table.fillna('')
+    return retention_table
+
 def create_download_link(df, filename, file_label):
     """Create a download link for a dataframe"""
     csv = df.to_csv(index=False)
@@ -496,7 +596,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis"])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "MoM Retention"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -557,6 +657,90 @@ def main():
                 #         total_customers = active_customers_rows['Total'].sum()
                 #         st.metric("Total Active Customer Interactions", f"{total_customers:,}")
             
+            with tab5:
+                st.subheader("📈 MoM Retention Analysis")
+                st.markdown("""
+                **Month-over-Month Retention Analysis** shows the Average Revenue Per User (ARPU) for each cohort across different months.
+                
+                This analysis uses the Excel formula: 
+                `=IF(D$3<$B14,"",SUMIFS(sales,pome_month,cohort_month,month,analysis_month)/SUMIFS(users,pome_month,cohort_month,month,analysis_month))`
+                """)
+                
+                # Calculate retention analysis
+                with st.spinner("Calculating MoM Retention..."):
+                    try:
+                        retention_table = retention_calculation(raw_data, cohort_table)
+                        
+                        if retention_table is not None and not retention_table.empty:
+                            st.success("✅ MoM Retention calculated successfully!")
+                            
+                            # # Display key metrics
+                            # col1, col2, col3 = st.columns(3)
+                            # with col1:
+                            #     total_cohorts = len(retention_table)
+                            #     st.metric("Total Cohorts", total_cohorts)
+                            # with col2:
+                            #     avg_cohort_size = retention_table['Cohort Size'].mean()
+                            #     st.metric("Avg Cohort Size", f"{avg_cohort_size:.0f}")
+                            # with col3:
+                            #     total_customers = retention_table['Cohort Size'].sum()
+                            #     st.metric("Total Customers", f"{total_customers:,}")
+                            
+                            # Display retention table
+                            st.subheader("MoM Retention Table (ARPU by Cohort)")
+                            st.info("💡 Values represent Average Revenue Per User (ARPU) for each cohort in each month")
+                            
+                            # Format the display table for better readability
+                            display_table = retention_table.copy()
+                            
+                            # Format numeric columns (skip POME Month and Cohort Size)
+                            numeric_cols = [col for col in display_table.columns if col not in ['POME Month']]
+                            for col in numeric_cols:
+                                display_table[col] = display_table[col].apply(
+                                    lambda x: f"${x:.2f}" if isinstance(x, (int, float)) and x != 0 else (x if x != 0 else "")
+                                )
+                            
+                            # Display with styling
+                            st.dataframe(
+                                display_table,
+                                use_container_width=True,
+                                height=600
+                            )
+                            
+                            # Download button
+                            st.markdown(create_download_link(retention_table, "MoM_Retention_Analysis.csv", "📥 Download MoM Retention"), unsafe_allow_html=True)
+                            
+                            # Analysis insights
+                            st.subheader("📊 Key Insights")
+                            
+                            # Calculate some insights
+                            numeric_retention_data = retention_table.copy()
+                            for col in numeric_cols:
+                                numeric_retention_data[col] = pd.to_numeric(numeric_retention_data[col], errors='coerce')
+                            
+                            # Find highest ARPU
+                            arpu_values = []
+                            for col in numeric_cols:
+                                col_values = numeric_retention_data[col].dropna()
+                                if len(col_values) > 0:
+                                    arpu_values.extend(col_values.tolist())
+                            
+                            if arpu_values:
+                                max_arpu = max([x for x in arpu_values if x > 0])
+                                avg_arpu = np.mean([x for x in arpu_values if x > 0])
+                                
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("Highest ARPU", f"${max_arpu:.2f}")
+                                with col2:
+                                    st.metric("Average ARPU", f"${avg_arpu:.2f}")
+                        else:
+                            st.error("❌ Failed to calculate retention analysis. Please check your data.")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error calculating retention: {str(e)}")
+                        st.error("Please ensure your cohort analysis was calculated successfully first.")
+            
             # Download all results as ZIP
             st.header("📦 Download All Results")
             if st.button("📥 Download All as ZIP"):
@@ -568,6 +752,14 @@ def main():
                     zip_file.writestr("ProductSummary.csv", product_summary.to_csv(index=False))
                     zip_file.writestr("RawData.csv", raw_data.to_csv(index=False))
                     zip_file.writestr(f"Cohort_Analysis_{selected_sku}.csv", cohort_table.to_csv(index=False))
+                    
+                    # Add retention analysis if available
+                    try:
+                        retention_table = retention_calculation(raw_data, cohort_table)
+                        if retention_table is not None and not retention_table.empty:
+                            zip_file.writestr("MoM_Retention_Analysis.csv", retention_table.to_csv(index=False))
+                    except:
+                        pass  # Skip if retention calculation fails
                 
                 zip_buffer.seek(0)
                 
