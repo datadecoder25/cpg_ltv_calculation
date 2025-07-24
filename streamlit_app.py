@@ -5,6 +5,8 @@ import io
 import zipfile
 from datetime import datetime
 import math
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Set page config
 st.set_page_config(
@@ -622,6 +624,124 @@ def retention_calculation_v2(raw_data, cohort_table):
     
     return retention_table
 
+def calculate_user_breakdown(raw_data, selected_merchant_sku=None):
+    """
+    Calculate old users vs new users breakdown based on merchant SKU selection
+    
+    Args:
+        raw_data (pd.DataFrame): RawData DataFrame
+        selected_merchant_sku (str): Selected merchant SKU or None for all
+        
+    Returns:
+        pd.DataFrame: DataFrame with month, all_users, new_users, old_users
+    """
+    
+    # Apply SKU filtering if specified
+    if selected_merchant_sku and selected_merchant_sku != "All":
+        filtered_data = raw_data[raw_data['merchant_sku'] == selected_merchant_sku].copy()
+    else:
+        filtered_data = raw_data.copy()
+    
+    # Calculate new users (where pome_month equals month - first-time buyers)
+    new_users_data = filtered_data[filtered_data['pome_month'] == filtered_data['month']].copy()
+    new_users = new_users_data.groupby(['month']).agg({'users': 'sum'}).reset_index().rename(columns={'users': 'new_users'})
+    
+    # Calculate all users for each month
+    all_users = filtered_data.groupby(['month']).agg({'users': 'sum'}).reset_index().rename(columns={'users': 'all_users'})
+    
+    # Combine and calculate old users
+    combined_users = pd.merge(all_users, new_users, on='month', how='left')
+    combined_users['new_users'] = combined_users['new_users'].fillna(0)
+    combined_users['old_users'] = combined_users['all_users'] - combined_users['new_users']
+    
+    # Sort by month
+    combined_users['month'] = pd.to_datetime(combined_users['month'])
+    combined_users = combined_users.sort_values('month').reset_index(drop=True)
+    
+    return combined_users
+
+def create_user_breakdown_chart(user_breakdown_df, selected_sku):
+    """
+    Create a stacked bar chart showing old users vs new users
+    
+    Args:
+        user_breakdown_df (pd.DataFrame): DataFrame with user breakdown data
+        selected_sku (str): Selected merchant SKU for title
+        
+    Returns:
+        plotly.graph_objects.Figure: Plotly figure object
+    """
+    
+    # Create stacked bar chart
+    fig = go.Figure()
+    
+    # Add new users bar
+    fig.add_trace(go.Bar(
+        name='New Users',
+        x=user_breakdown_df['month'].dt.strftime('%Y-%m'),
+        y=user_breakdown_df['new_users'],
+        marker_color='#2E86AB',  # Blue
+        text=user_breakdown_df['new_users'],
+        textposition='inside',
+        texttemplate='%{text}',
+        hovertemplate='<b>New Users</b><br>' +
+                      'Month: %{x}<br>' +
+                      'Count: %{y:,}<extra></extra>'
+    ))
+    
+    # Add old users bar
+    fig.add_trace(go.Bar(
+        name='Returning Users',
+        x=user_breakdown_df['month'].dt.strftime('%Y-%m'),
+        y=user_breakdown_df['old_users'],
+        marker_color='#A23B72',  # Purple/Pink
+        text=user_breakdown_df['old_users'],
+        textposition='inside',
+        texttemplate='%{text}',
+        hovertemplate='<b>Returning Users</b><br>' +
+                      'Month: %{x}<br>' +
+                      'Count: %{y:,}<extra></extra>'
+    ))
+    
+    # Update layout for stacked bar chart
+    sku_text = f" - {selected_sku}" if selected_sku != "All" else " - All SKUs"
+    
+    fig.update_layout(
+        title=f'User Breakdown by Month{sku_text}',
+        xaxis_title='Month',
+        yaxis_title='Number of Users',
+        barmode='stack',
+        hovermode='x unified',
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(t=80, b=40, l=40, r=40),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+    
+    # Style the axes
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(128,128,128,0.2)',
+        tickangle=45
+    )
+    
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(128,128,128,0.2)'
+    )
+    
+    return fig
+
 def create_download_link(df, filename, file_label):
     """Create a download link for a dataframe"""
     csv = df.to_csv(index=False)
@@ -677,7 +797,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "Retention & LTV Analysis"])
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "Retention & LTV Analysis", "User Breakdown Analysis"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -898,6 +1018,139 @@ def main():
                         st.error(f"❌ Error calculating cumulative LTV: {str(e)}")
                         st.error("Please ensure your cohort analysis was calculated successfully and contains LTV metrics.")
             
+            with tab6:
+                st.header("👥 User Breakdown Analysis")
+                st.markdown("""
+                **New vs Returning Users Analysis** provides insights into customer acquisition and retention patterns by showing the breakdown of users each month.
+                
+                This analysis helps answer key business questions:
+                - How many new customers are we acquiring each month?
+                - What's the ratio of new vs returning customers?
+                - How does user composition change over time?
+                """)
+                
+                # Merchant SKU selection for user breakdown
+                st.subheader("🎯 Analysis Configuration")
+                available_skus = ["All"] + sorted(raw_data['merchant_sku'].unique().tolist())
+                selected_sku_breakdown = st.selectbox(
+                    "Select Merchant SKU for User Breakdown:",
+                    available_skus,
+                    help="Choose a specific SKU or 'All' to analyze user patterns across all SKUs",
+                    key="user_breakdown_sku_selector"
+                )
+                
+                st.markdown("---")
+                
+                # User breakdown explanation
+                st.subheader("📖 Methodology")
+                st.markdown("""
+                **Calculation Logic**:
+                - **New Users**: Users where their first purchase month (POME) equals the analysis month
+                - **Returning Users**: Total users minus new users for each month
+                - **Total Users**: All unique users who made purchases in each month
+                
+                This segmentation helps identify customer lifecycle patterns and acquisition effectiveness.
+                """)
+                
+                # Calculate user breakdown
+                with st.spinner(f"Calculating user breakdown for {selected_sku_breakdown}..."):
+                    user_breakdown = calculate_user_breakdown(raw_data, selected_sku_breakdown)
+                
+                if not user_breakdown.empty:
+                    # Display key metrics
+                    st.subheader("📊 Key Metrics")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        total_new_users = user_breakdown['new_users'].sum()
+                        st.metric("Total New Users", f"{total_new_users:,}")
+                    with col2:
+                        total_returning_users = user_breakdown['old_users'].sum()
+                        st.metric("Total Returning Users", f"{total_returning_users:,}")
+                    with col3:
+                        total_all_users = user_breakdown['all_users'].sum()
+                        st.metric("Total Users", f"{total_all_users:,}")
+                    with col4:
+                        if total_all_users > 0:
+                            new_user_percentage = (total_new_users / total_all_users) * 100
+                            st.metric("New User %", f"{new_user_percentage:.1f}%")
+                        else:
+                            st.metric("New User %", "0%")
+                    
+                    # Additional insights
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        avg_new_users_per_month = user_breakdown['new_users'].mean()
+                        st.metric("Avg New Users/Month", f"{avg_new_users_per_month:.0f}")
+                    with col2:
+                        avg_returning_users_per_month = user_breakdown['old_users'].mean()
+                        st.metric("Avg Returning Users/Month", f"{avg_returning_users_per_month:.0f}")
+                    
+                    # Create and display the stacked bar chart
+                    st.subheader("📈 User Breakdown Visualization")
+                    fig = create_user_breakdown_chart(user_breakdown, selected_sku_breakdown)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Additional analysis insights
+                    st.subheader("🔍 Analysis Insights")
+                    
+                    # Calculate trends
+                    if len(user_breakdown) >= 2:
+                        recent_new_users = user_breakdown.tail(3)['new_users'].mean()
+                        earlier_new_users = user_breakdown.head(len(user_breakdown)-3)['new_users'].mean() if len(user_breakdown) > 3 else user_breakdown.head(1)['new_users'].iloc[0]
+                        
+                        if earlier_new_users > 0:
+                            new_user_trend = ((recent_new_users - earlier_new_users) / earlier_new_users) * 100
+                            trend_direction = "📈 Increasing" if new_user_trend > 5 else "📉 Decreasing" if new_user_trend < -5 else "➡️ Stable"
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.info(f"**New User Acquisition Trend**: {trend_direction} ({new_user_trend:+.1f}%)")
+                            with col2:
+                                best_month = user_breakdown.loc[user_breakdown['new_users'].idxmax()]
+                                st.info(f"**Best Acquisition Month**: {best_month['month'].strftime('%Y-%m')} ({best_month['new_users']:.0f} new users)")
+                    
+                    # Display data table
+                    st.subheader("📋 Detailed User Breakdown Data")
+                    display_breakdown = user_breakdown.copy()
+                    display_breakdown['month'] = display_breakdown['month'].dt.strftime('%Y-%m-%d')
+                    display_breakdown = display_breakdown.rename(columns={
+                        'month': 'Month',
+                        'all_users': 'Total Users',
+                        'new_users': 'New Users',
+                        'old_users': 'Returning Users'
+                    })
+                    
+                    # Add percentage columns
+                    display_breakdown['New User %'] = ((display_breakdown['New Users'] / display_breakdown['Total Users']) * 100).round(1)
+                    display_breakdown['Returning User %'] = ((display_breakdown['Returning Users'] / display_breakdown['Total Users']) * 100).round(1)
+                    
+                    st.dataframe(
+                        display_breakdown,
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # Download button for user breakdown
+                    st.markdown(create_download_link(display_breakdown, f"User_Breakdown_{selected_sku_breakdown}.csv", "📥 Download User Breakdown Analysis"), unsafe_allow_html=True)
+                    
+                    # Summary insights
+                    st.subheader("💡 Summary Insights")
+                    total_months = len(user_breakdown)
+                    months_with_growth = len(user_breakdown[user_breakdown['new_users'] > user_breakdown['old_users']])
+                    
+                    insights = [
+                        f"📅 **Analysis Period**: {total_months} months of data",
+                        f"🆕 **Acquisition-Heavy Months**: {months_with_growth} out of {total_months} months had more new users than returning users",
+                        f"📊 **Customer Base Composition**: {new_user_percentage:.1f}% new users, {(100-new_user_percentage):.1f}% returning users"
+                    ]
+                    
+                    for insight in insights:
+                        st.markdown(insight)
+                
+                else:
+                    st.warning("No user breakdown data available for the selected criteria.")
+                    st.info("Please ensure you have processed data with valid purchase dates and user information.")
+            
             # Download all results as ZIP
             st.header("📦 Download All Results")
             if st.button("📥 Download All as ZIP"):
@@ -925,6 +1178,26 @@ def main():
                             zip_file.writestr("Cumulative_LTV_Analysis.csv", cumulative_ltv_table.to_csv(index=False))
                     except:
                         pass  # Skip if cumulative LTV calculation fails
+                    
+                    # Add user breakdown analysis if available
+                    try:
+                        # Use the "All" option for ZIP download to include comprehensive data
+                        user_breakdown = calculate_user_breakdown(raw_data, "All")
+                        if not user_breakdown.empty:
+                            display_breakdown = user_breakdown.copy()
+                            display_breakdown['month'] = display_breakdown['month'].dt.strftime('%Y-%m-%d')
+                            display_breakdown = display_breakdown.rename(columns={
+                                'month': 'Month',
+                                'all_users': 'Total Users',
+                                'new_users': 'New Users',
+                                'old_users': 'Returning Users'
+                            })
+                            # Add percentage columns
+                            display_breakdown['New User %'] = ((display_breakdown['New Users'] / display_breakdown['Total Users']) * 100).round(1)
+                            display_breakdown['Returning User %'] = ((display_breakdown['Returning Users'] / display_breakdown['Total Users']) * 100).round(1)
+                            zip_file.writestr("User_Breakdown_Analysis.csv", display_breakdown.to_csv(index=False))
+                    except:
+                        pass  # Skip if user breakdown calculation fails
                 
                 zip_buffer.seek(0)
                 
