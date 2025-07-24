@@ -541,6 +541,87 @@ def retention_calculation(RawData, filled_table):
     retention_table = retention_table.fillna('')
     return retention_table
 
+def retention_calculation_v2(raw_data, cohort_table):
+    """
+    Calculate cumulative LTV retention table from cohort analysis
+    
+    Args:
+        raw_data (pd.DataFrame): RawData DataFrame (not used but kept for consistency)
+        cohort_table (pd.DataFrame): Cohort analysis table with LTV data
+        
+    Returns:
+        pd.DataFrame: Retention table with cumulative LTV values
+    """
+    
+    # Extract LTV data from cohort table
+    ltv_data = cohort_table[cohort_table['Metric'] == 'LTV'].copy()
+    
+    if ltv_data.empty:
+        # If no LTV data, return empty table
+        return pd.DataFrame()
+    
+    # Get cohort information
+    cohort_info = cohort_table[cohort_table['Metric'] == 'LTV'][['POME Month', 'Cohort Size']].drop_duplicates()
+    
+    # Get all month columns (excluding POME Month, Cohort Size, Metric, Total)
+    month_columns = [col for col in ltv_data.columns if col not in ['POME Month', 'Cohort Size', 'Metric', 'Total']]
+    month_columns = sorted(month_columns)  # Ensure chronological order
+    
+    print(f"Creating cumulative LTV retention table...")
+    print(f"Found {len(ltv_data)} cohorts and {len(month_columns)} months")
+    print(f"Months: {month_columns}")
+    
+    # Create the retention matrix
+    cohort_months = sorted(ltv_data['POME Month'].unique())
+    retention_data = []
+    
+    for cohort_month in cohort_months:
+        # Get LTV data for this cohort
+        cohort_ltv = ltv_data[ltv_data['POME Month'] == cohort_month].iloc[0]
+        
+        # Create row data
+        row_data = {'POME Month': cohort_month}
+        
+        # Add cumulative LTV values for each month
+        cumulative_ltv = 0
+        for month_col in month_columns:
+            # Only include months >= cohort month for cumulative calculation
+            if month_col >= cohort_month:
+                month_ltv = cohort_ltv[month_col] if month_col in cohort_ltv else 0
+                
+                # Handle numeric conversion
+                if isinstance(month_ltv, (int, float)) and month_ltv > 0:
+                    cumulative_ltv += month_ltv
+                    row_data[month_col] = round(cumulative_ltv, 2)
+                else:
+                    row_data[month_col] = cumulative_ltv if cumulative_ltv > 0 else ""
+            else:
+                # Months before cohort month should be empty
+                row_data[month_col] = ""
+        
+        retention_data.append(row_data)
+    
+    # Create DataFrame
+    retention_table = pd.DataFrame(retention_data)
+    
+    # Add cohort sizes
+    retention_table = retention_table.merge(
+        cohort_info[['POME Month', 'Cohort Size']], 
+        on='POME Month', 
+        how='left'
+    )
+    
+    # Reorder columns: POME Month, Cohort Size, then month columns
+    column_order = ['POME Month', 'Cohort Size'] + month_columns
+    retention_table = retention_table[column_order]
+    
+    # Fill any remaining NaN values
+    retention_table = retention_table.fillna('')
+    
+    print(f"✅ Cumulative LTV retention table created with shape: {retention_table.shape}")
+    
+    return retention_table
+
 def create_download_link(df, filename, file_label):
     """Create a download link for a dataframe"""
     csv = df.to_csv(index=False)
@@ -596,7 +677,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "MoM Retention"])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "Retention & LTV Analysis"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -640,25 +721,17 @@ def main():
                 
                 # Download button for cohort analysis
                 st.markdown(create_download_link(cohort_table, f"Cohort_Analysis_{selected_sku}.csv", "📥 Download Cohort Analysis"), unsafe_allow_html=True)
-                
-                # # Additional metrics display
-                # if not cohort_table.empty:
-                #     st.subheader("📊 Summary Metrics")
-                    
-                #     # Filter for specific metrics to show summary
-                #     revenue_rows = cohort_table[cohort_table['Metric'] == 'Revenue']
-                #     active_customers_rows = cohort_table[cohort_table['Metric'] == 'Active Customers']
-                    
-                #     if not revenue_rows.empty:
-                #         total_revenue = revenue_rows['Total'].sum()
-                #         st.metric("Total Revenue Across All Cohorts", f"${total_revenue:,.2f}")
-                    
-                #     if not active_customers_rows.empty:
-                #         total_customers = active_customers_rows['Total'].sum()
-                #         st.metric("Total Active Customer Interactions", f"{total_customers:,}")
             
             with tab5:
-                st.subheader("📈 MoM Retention Analysis")
+                st.header("📈 Retention & LTV Analysis")
+                st.markdown("""
+                This tab contains two complementary analyses:
+                1. **MoM Retention Analysis** - ARPU-based retention using Excel formula
+                2. **Cumulative LTV Analysis** - Cumulative lifetime value from cohort data
+                """)
+                
+                # MoM Retention Analysis Section
+                st.subheader("📊 MoM Retention Analysis (ARPU)")
                 st.markdown("""
                 **Month-over-Month Retention Analysis** shows the Average Revenue Per User (ARPU) for each cohort across different months.
                 
@@ -740,6 +813,90 @@ def main():
                     except Exception as e:
                         st.error(f"❌ Error calculating retention: {str(e)}")
                         st.error("Please ensure your cohort analysis was calculated successfully first.")
+                
+                # Add separator
+                st.markdown("---")
+                
+                # Cumulative LTV Analysis Section
+                st.subheader("💰 Cumulative LTV Analysis")
+                st.markdown("""
+                **Cumulative Lifetime Value Analysis** shows the cumulative LTV for each cohort across different months. 
+                This is calculated by taking the LTV values from the cohort analysis and showing them cumulatively from lowest month to highest month.
+                
+                💡 **How it works**: For each cohort, the LTV values are summed cumulatively across months, showing the total lifetime value accumulated over time.
+                """)
+                
+                # Calculate cumulative LTV analysis
+                with st.spinner("Calculating Cumulative LTV Analysis..."):
+                    try:
+                        cumulative_ltv_table = retention_calculation_v2(raw_data, cohort_table)
+                        
+                        if cumulative_ltv_table is not None and not cumulative_ltv_table.empty:
+                            st.success("✅ Cumulative LTV Analysis calculated successfully!")
+                            
+                            # Display metrics for cumulative LTV
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                total_cohorts_ltv = len(cumulative_ltv_table)
+                                st.metric("Total Cohorts", total_cohorts_ltv)
+                            with col2:
+                                # Find the highest cumulative LTV value
+                                numeric_cols_ltv = [col for col in cumulative_ltv_table.columns if col not in ['POME Month', 'Cohort Size']]
+                                max_ltv_values = []
+                                for _, row in cumulative_ltv_table.iterrows():
+                                    row_values = [row[col] for col in numeric_cols_ltv if isinstance(row[col], (int, float)) and row[col] > 0]
+                                    if row_values:
+                                        max_ltv_values.append(max(row_values))
+                                
+                                if max_ltv_values:
+                                    highest_ltv = max(max_ltv_values)
+                                    st.metric("Highest Cumulative LTV", f"${highest_ltv:.2f}")
+                                else:
+                                    st.metric("Highest Cumulative LTV", "$0.00")
+                            with col3:
+                                # Calculate average final LTV (last non-empty value for each cohort)
+                                final_ltv_values = []
+                                for _, row in cumulative_ltv_table.iterrows():
+                                    row_values = [row[col] for col in reversed(numeric_cols_ltv) if isinstance(row[col], (int, float)) and row[col] > 0]
+                                    if row_values:
+                                        final_ltv_values.append(row_values[0])  # First non-zero from the right (latest month)
+                                
+                                if final_ltv_values:
+                                    avg_final_ltv = sum(final_ltv_values) / len(final_ltv_values)
+                                    st.metric("Avg Final LTV", f"${avg_final_ltv:.2f}")
+                                else:
+                                    st.metric("Avg Final LTV", "$0.00")
+                            
+                            # Display cumulative LTV table
+                            st.subheader("Cumulative LTV Table by Cohort")
+                            st.info("💡 Values represent cumulative LTV for each cohort across months. Values increase from left to right showing total lifetime value accumulation.")
+                            
+                            # Format the display table for better readability
+                            display_table_ltv = cumulative_ltv_table.copy()
+                            
+                            # Format numeric columns (skip POME Month and Cohort Size)
+                            numeric_cols_ltv = [col for col in display_table_ltv.columns if col not in ['POME Month', 'Cohort Size']]
+                            for col in numeric_cols_ltv:
+                                display_table_ltv[col] = display_table_ltv[col].apply(
+                                    lambda x: f"${x:.2f}" if isinstance(x, (int, float)) and x != 0 else (x if x != 0 else "")
+                                )
+                            
+                            # Display with styling
+                            st.dataframe(
+                                display_table_ltv,
+                                use_container_width=True,
+                                height=600
+                            )
+                            
+                            # Download button for cumulative LTV
+                            st.markdown(create_download_link(cumulative_ltv_table, "Cumulative_LTV_Analysis.csv", "📥 Download Cumulative LTV"), unsafe_allow_html=True)
+                            
+                        else:
+                            st.error("❌ Failed to calculate cumulative LTV analysis. Please ensure your cohort analysis contains LTV data.")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error calculating cumulative LTV: {str(e)}")
+                        st.error("Please ensure your cohort analysis was calculated successfully and contains LTV metrics.")
             
             # Download all results as ZIP
             st.header("📦 Download All Results")
@@ -760,6 +917,14 @@ def main():
                             zip_file.writestr("MoM_Retention_Analysis.csv", retention_table.to_csv(index=False))
                     except:
                         pass  # Skip if retention calculation fails
+                    
+                    # Add cumulative LTV analysis if available
+                    try:
+                        cumulative_ltv_table = retention_calculation_v2(raw_data, cohort_table)
+                        if cumulative_ltv_table is not None and not cumulative_ltv_table.empty:
+                            zip_file.writestr("Cumulative_LTV_Analysis.csv", cumulative_ltv_table.to_csv(index=False))
+                    except:
+                        pass  # Skip if cumulative LTV calculation fails
                 
                 zip_buffer.seek(0)
                 
