@@ -278,6 +278,52 @@ def calculate_raw_data(combined_df):
     
     return RawData
 
+def calculate_raw_data_wo_sku(combined_df):
+    # Convert SQL RawData query to pandas operations
+    # Step 1: Create ntb equivalent
+    ntb_df_wo_sku = combined_df[combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01'].copy()
+    ntb_df_wo_sku['buyer_email'] = ntb_df_wo_sku['buyer_email'].fillna('NA')
+    ntb_df_wo_sku['pome_month'] = ntb_df_wo_sku.groupby('buyer_email', dropna=False)['purchase_date'].transform(lambda x: x.dt.strftime('%Y-%m-01').min())
+    ntb_df_wo_sku = ntb_df_wo_sku[['buyer_email', 'pome_month']].drop_duplicates().rename(columns={'buyer_email': 'user_id'})
+
+    # Step 3: Create output_tbl equivalent
+    # Filter the main dataframe
+    filtered_df_wo_sku = combined_df[
+        (combined_df['currency'] == 'USD') &
+        (combined_df['item_price'] > 0) &
+        (combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01')
+    ].copy()
+
+    # Create month column
+    filtered_df_wo_sku['month'] = filtered_df_wo_sku['purchase_date'].dt.strftime('%Y-%m-01')
+    filtered_df_wo_sku['buyer_email'] = filtered_df_wo_sku['buyer_email'].fillna('NA')
+
+    filtered_df_wo_sku = filtered_df_wo_sku[['month', 'buyer_email']].reset_index(drop=True)
+
+    # Left join with ntb
+    output_tbl_wo_sku = filtered_df_wo_sku.merge(
+        ntb_df_wo_sku,
+        left_on='buyer_email',
+        right_on='user_id',
+        how='left'
+    )
+
+    output_tbl_wo_sku['buyer_email'] = output_tbl_wo_sku['buyer_email'].fillna('NA').drop_duplicates()
+
+
+    # Group by and aggregate
+    RawDataWithoutSku = output_tbl_wo_sku.groupby(['month', 'pome_month'], dropna=False).agg({
+        'buyer_email': 'nunique',       # users
+    }).reset_index()
+
+    # Rename columns
+    RawDataWithoutSku = RawDataWithoutSku.rename(columns={
+        'buyer_email': 'users',
+    })
+
+    return RawDataWithoutSku
+    
+
 def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
     """Calculate cohort analysis"""
     # Get unique months and filter for last 12
@@ -624,7 +670,7 @@ def retention_calculation_v2(raw_data, cohort_table):
     
     return retention_table
 
-def calculate_user_breakdown(raw_data, selected_merchant_sku=None):
+def calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_merchant_sku=None):
     """
     Calculate old users vs new users breakdown based on merchant SKU selection
     
@@ -640,7 +686,7 @@ def calculate_user_breakdown(raw_data, selected_merchant_sku=None):
     if selected_merchant_sku and selected_merchant_sku != "All":
         filtered_data = raw_data[raw_data['merchant_sku'] == selected_merchant_sku].copy()
     else:
-        filtered_data = raw_data.copy()
+        filtered_data = raw_data_wo_sku.copy()
     
     # Calculate new users (where pome_month equals month - first-time buyers)
     new_users_data = filtered_data[filtered_data['pome_month'] == filtered_data['month']].copy()
@@ -793,6 +839,9 @@ def main():
             
             with st.spinner("Calculating RawData..."):
                 raw_data = calculate_raw_data(combined_df)
+
+            with st.spinner("Calculating RawDataWithoutSku..."):
+                raw_data_wo_sku = calculate_raw_data_wo_sku(combined_df)
             
             st.success("All calculations completed!")
             
@@ -1054,7 +1103,7 @@ def main():
                 
                 # Calculate user breakdown
                 with st.spinner(f"Calculating user breakdown for {selected_sku_breakdown}..."):
-                    user_breakdown = calculate_user_breakdown(raw_data, selected_sku_breakdown)
+                    user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_sku_breakdown)
                 
                 if not user_breakdown.empty:
                     # Display key metrics
