@@ -46,7 +46,7 @@ def process_files(uploaded_files):
     
     return combined_df
 
-def calculate_product_raw(combined_df):
+def calculate_product_raw(combined_df, currency='USD'):
     """Calculate ProductRaw dataframe"""
     # Ensure purchase_date is datetime
     combined_df['purchase_date'] = pd.to_datetime(combined_df['purchase_date'], utc=True, errors='coerce')
@@ -56,7 +56,7 @@ def calculate_product_raw(combined_df):
     
     # Filter data
     filtered_df = combined_df[
-        (combined_df['currency'] == 'USD') &
+        (combined_df['currency'] == currency) &
         (combined_df['item_price'] > 0) &
         (combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01')
     ].copy()
@@ -110,7 +110,7 @@ def calculate_product_raw(combined_df):
     
     return ProductRaw
 
-def calculate_product_summary(combined_df):
+def calculate_product_summary(combined_df, currency='USD'):
     """Calculate ProductSummary dataframe"""
     # Create cte_tbl equivalent
     cte_tbl = combined_df[['buyer_email', 'merchant_sku', 'amazon_order_id', 'purchase_date', 'item_price', 'shipped_quantity', 'currency']].copy()
@@ -122,7 +122,7 @@ def calculate_product_summary(combined_df):
     
     # Apply filters
     cte_tbl = cte_tbl[
-        (cte_tbl['currency'] == 'USD') &
+        (cte_tbl['currency'] == currency) &
         (cte_tbl['item_price'] > 0) &
         (cte_tbl['purch_month'] > '2022-09-01')
     ].copy()
@@ -203,7 +203,7 @@ def calculate_product_summary(combined_df):
     
     return ProductSummary
 
-def calculate_raw_data(combined_df):
+def calculate_raw_data(combined_df, currency='USD'):
     """Calculate RawData dataframe"""
     # Create ntb equivalent
     # Convert SQL RawData query to pandas operations
@@ -223,7 +223,7 @@ def calculate_raw_data(combined_df):
     # Step 3: Create output_tbl equivalent
     # Filter the main dataframe
     filtered_df = combined_df[
-        (combined_df['currency'] == 'USD') &
+        (combined_df['currency'] == currency) &
         (combined_df['item_price'] > 0) &
         (combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01')
     ].copy()
@@ -278,7 +278,7 @@ def calculate_raw_data(combined_df):
     
     return RawData
 
-def calculate_raw_data_wo_sku(combined_df):
+def calculate_raw_data_wo_sku(combined_df, currency='USD'):
     # Convert SQL RawData query to pandas operations
     # Step 1: Create ntb equivalent
     ntb_df_wo_sku = combined_df[combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01'].copy()
@@ -289,7 +289,7 @@ def calculate_raw_data_wo_sku(combined_df):
     # Step 3: Create output_tbl equivalent
     # Filter the main dataframe
     filtered_df_wo_sku = combined_df[
-        (combined_df['currency'] == 'USD') &
+        (combined_df['currency'] == currency) &
         (combined_df['item_price'] > 0) &
         (combined_df['purchase_date'].dt.strftime('%Y-%m-01') > '2022-09-01')
     ].copy()
@@ -828,20 +828,31 @@ def main():
             with col3:
                 st.metric("Files Processed", len(uploaded_files))
             
+            # Currency Selection
+            st.header("💰 Currency Selection")
+            available_currencies = sorted(combined_df['currency'].unique())
+            selected_currency = st.selectbox(
+                "Select Currency",
+                options=available_currencies,
+                index=0 if 'USD' not in available_currencies else available_currencies.index('USD'),
+                help="Choose the currency for analysis. All calculations will be filtered by this currency."
+            )
+            st.info(f"Selected Currency: **{selected_currency}**")
+            
             # Calculate all dataframes
             st.header("📈 Calculations")
             
             with st.spinner("Calculating ProductRaw..."):
-                product_raw = calculate_product_raw(combined_df)
+                product_raw = calculate_product_raw(combined_df, selected_currency)
             
             with st.spinner("Calculating ProductSummary..."):
-                product_summary = calculate_product_summary(combined_df)
+                product_summary = calculate_product_summary(combined_df, selected_currency)
             
             with st.spinner("Calculating RawData..."):
-                raw_data = calculate_raw_data(combined_df)
+                raw_data = calculate_raw_data(combined_df, selected_currency)
 
             with st.spinner("Calculating RawDataWithoutSku..."):
-                raw_data_wo_sku = calculate_raw_data_wo_sku(combined_df)
+                raw_data_wo_sku = calculate_raw_data_wo_sku(combined_df, selected_currency)
             
             st.success("All calculations completed!")
             
@@ -1271,7 +1282,7 @@ def main():
         - **amazon_order_id**: Order ID
         - **item_price**: Price of item
         - **shipped_quantity**: Quantity shipped
-        - **currency**: Currency (USD)
+        - **currency**: Currency
         - **title**: Product title
         - And other relevant e-commerce data columns...
         """)
