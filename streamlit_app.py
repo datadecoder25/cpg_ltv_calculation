@@ -894,97 +894,96 @@ def main():
             with tab5:
                 st.header("📈 Retention & LTV Analysis")
                 st.markdown("""
-                This tab contains two complementary analyses:
-                1. **MoM Retention Analysis** - ARPU-based retention using Excel formula
-                2. **Cumulative LTV Analysis** - Cumulative lifetime value from cohort data
+                This tab contains complementary analyses:
+                 **Cumulative LTV Analysis** - Cumulative lifetime value from cohort data
                 """)
                 
-                # MoM Retention Analysis Section
-                st.subheader("📊 MoM Retention Analysis (ARPU)")
-                st.markdown("""
-                **Month-over-Month Retention Analysis** shows the Average Revenue Per User (ARPU) for each cohort across different months.
+                # # MoM Retention Analysis Section
+                # st.subheader("📊 MoM Retention Analysis (ARPU)")
+                # st.markdown("""
+                # **Month-over-Month Retention Analysis** shows the Average Revenue Per User (ARPU) for each cohort across different months.
                 
-                This analysis uses the Excel formula: 
-                `=IF(D$3<$B14,"",SUMIFS(sales,pome_month,cohort_month,month,analysis_month)/SUMIFS(users,pome_month,cohort_month,month,analysis_month))`
-                """)
+                # This analysis uses the Excel formula: 
+                # `=IF(D$3<$B14,"",SUMIFS(sales,pome_month,cohort_month,month,analysis_month)/SUMIFS(users,pome_month,cohort_month,month,analysis_month))`
+                # """)
                 
-                # Calculate retention analysis
-                with st.spinner("Calculating MoM Retention..."):
-                    try:
-                        retention_table = retention_calculation(raw_data, cohort_table)
+                # # Calculate retention analysis
+                # with st.spinner("Calculating MoM Retention..."):
+                #     try:
+                #         retention_table = retention_calculation(raw_data, cohort_table)
                         
-                        if retention_table is not None and not retention_table.empty:
-                            st.success("✅ MoM Retention calculated successfully!")
+                #         if retention_table is not None and not retention_table.empty:
+                #             st.success("✅ MoM Retention calculated successfully!")
                             
-                            # # Display key metrics
-                            # col1, col2, col3 = st.columns(3)
-                            # with col1:
-                            #     total_cohorts = len(retention_table)
-                            #     st.metric("Total Cohorts", total_cohorts)
-                            # with col2:
-                            #     avg_cohort_size = retention_table['Cohort Size'].mean()
-                            #     st.metric("Avg Cohort Size", f"{avg_cohort_size:.0f}")
-                            # with col3:
-                            #     total_customers = retention_table['Cohort Size'].sum()
-                            #     st.metric("Total Customers", f"{total_customers:,}")
+                #             # # Display key metrics
+                #             # col1, col2, col3 = st.columns(3)
+                #             # with col1:
+                #             #     total_cohorts = len(retention_table)
+                #             #     st.metric("Total Cohorts", total_cohorts)
+                #             # with col2:
+                #             #     avg_cohort_size = retention_table['Cohort Size'].mean()
+                #             #     st.metric("Avg Cohort Size", f"{avg_cohort_size:.0f}")
+                #             # with col3:
+                #             #     total_customers = retention_table['Cohort Size'].sum()
+                #             #     st.metric("Total Customers", f"{total_customers:,}")
                             
-                            # Display retention table
-                            st.subheader("MoM Retention Table (ARPU by Cohort)")
-                            st.info("💡 Values represent Average Revenue Per User (ARPU) for each cohort in each month")
+                #             # Display retention table
+                #             st.subheader("MoM Retention Table (ARPU by Cohort)")
+                #             st.info("💡 Values represent Average Revenue Per User (ARPU) for each cohort in each month")
                             
-                            # Format the display table for better readability
-                            display_table = retention_table.copy()
+                #             # Format the display table for better readability
+                #             display_table = retention_table.copy()
                             
-                            # Format numeric columns (skip POME Month and Cohort Size)
-                            numeric_cols = [col for col in display_table.columns if col not in ['POME Month']]
-                            for col in numeric_cols:
-                                display_table[col] = display_table[col].apply(
-                                    lambda x: f"${x:.2f}" if isinstance(x, (int, float)) and x != 0 else (x if x != 0 else "")
-                                )
+                #             # Format numeric columns (skip POME Month and Cohort Size)
+                #             numeric_cols = [col for col in display_table.columns if col not in ['POME Month']]
+                #             for col in numeric_cols:
+                #                 display_table[col] = display_table[col].apply(
+                #                     lambda x: f"${x:.2f}" if isinstance(x, (int, float)) and x != 0 else (x if x != 0 else "")
+                #                 )
                             
-                            # Display with styling
-                            st.dataframe(
-                                display_table,
-                                use_container_width=True,
-                                height=600
-                            )
+                #             # Display with styling
+                #             st.dataframe(
+                #                 display_table,
+                #                 use_container_width=True,
+                #                 height=600
+                #             )
                             
-                            # Download button
-                            st.markdown(create_download_link(retention_table, "MoM_Retention_Analysis.csv", "📥 Download MoM Retention"), unsafe_allow_html=True)
+                #             # Download button
+                #             st.markdown(create_download_link(retention_table, "MoM_Retention_Analysis.csv", "📥 Download MoM Retention"), unsafe_allow_html=True)
                             
-                            # Analysis insights
-                            st.subheader("📊 Key Insights")
+                #             # Analysis insights
+                #             st.subheader("📊 Key Insights")
                             
-                            # Calculate some insights
-                            numeric_retention_data = retention_table.copy()
-                            for col in numeric_cols:
-                                numeric_retention_data[col] = pd.to_numeric(numeric_retention_data[col], errors='coerce')
+                #             # Calculate some insights
+                #             numeric_retention_data = retention_table.copy()
+                #             for col in numeric_cols:
+                #                 numeric_retention_data[col] = pd.to_numeric(numeric_retention_data[col], errors='coerce')
                             
-                            # Find highest ARPU
-                            arpu_values = []
-                            for col in numeric_cols:
-                                col_values = numeric_retention_data[col].dropna()
-                                if len(col_values) > 0:
-                                    arpu_values.extend(col_values.tolist())
+                #             # Find highest ARPU
+                #             arpu_values = []
+                #             for col in numeric_cols:
+                #                 col_values = numeric_retention_data[col].dropna()
+                #                 if len(col_values) > 0:
+                #                     arpu_values.extend(col_values.tolist())
                             
-                            if arpu_values:
-                                max_arpu = max([x for x in arpu_values if x > 0])
-                                avg_arpu = np.mean([x for x in arpu_values if x > 0])
+                #             if arpu_values:
+                #                 max_arpu = max([x for x in arpu_values if x > 0])
+                #                 avg_arpu = np.mean([x for x in arpu_values if x > 0])
                                 
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("Highest ARPU", f"${max_arpu:.2f}")
-                                with col2:
-                                    st.metric("Average ARPU", f"${avg_arpu:.2f}")
-                        else:
-                            st.error("❌ Failed to calculate retention analysis. Please check your data.")
+                #                 col1, col2 = st.columns(2)
+                #                 with col1:
+                #                     st.metric("Highest ARPU", f"${max_arpu:.2f}")
+                #                 with col2:
+                #                     st.metric("Average ARPU", f"${avg_arpu:.2f}")
+                #         else:
+                #             st.error("❌ Failed to calculate retention analysis. Please check your data.")
                             
-                    except Exception as e:
-                        st.error(f"❌ Error calculating retention: {str(e)}")
-                        st.error("Please ensure your cohort analysis was calculated successfully first.")
+                #     except Exception as e:
+                #         st.error(f"❌ Error calculating retention: {str(e)}")
+                #         st.error("Please ensure your cohort analysis was calculated successfully first.")
                 
-                # Add separator
-                st.markdown("---")
+                # # Add separator
+                # st.markdown("---")
                 
                 # Cumulative LTV Analysis Section
                 st.subheader("💰 Cumulative LTV Analysis")
