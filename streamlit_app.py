@@ -356,7 +356,7 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
     cohort_df = pd.DataFrame(cohort_data)
     
     # Create metrics structure
-    metrics = ['Active Customers', 'Quantities', 'Orders', 'Revenue', 'Cumulative Revenue', 'Retention Rate', 'LTV']
+    metrics = ['Active Customers', 'Quantities', 'Orders', 'Revenue', 'Retention Rate', 'LTV'] #'Cumulative Revenue',
     month_columns = sorted(all_months)
     
     # Create the base structure
@@ -415,33 +415,33 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                     filled_table.at[idx, month_col] = int(round(value, 0))
                 elif metric == 'Revenue':
                     value = filtered_data['sales'].sum()
-                    filled_table.at[idx, month_col] = int(round(value, 0))
+                    filled_table.at[idx, month_col] = f"${round(value, 2):.2f}"
     
     # Handle Cumulative Revenue calculation
-    for idx, row in filled_table.iterrows():
-        if row['Metric'] == 'Cumulative Revenue':
-            pome_month = row['POME Month']
+    # for idx, row in filled_table.iterrows():
+    #     if row['Metric'] == 'Cumulative Revenue':
+    #         pome_month = row['POME Month']
             
-            revenue_row_idx = None
-            for rev_idx, rev_row in filled_table.iterrows():
-                if (rev_row['POME Month'] == pome_month and rev_row['Metric'] == 'Revenue'):
-                    revenue_row_idx = rev_idx
-                    break
+    #         revenue_row_idx = None
+    #         for rev_idx, rev_row in filled_table.iterrows():
+    #             if (rev_row['POME Month'] == pome_month and rev_row['Metric'] == 'Revenue'):
+    #                 revenue_row_idx = rev_idx
+    #                 break
             
-            if revenue_row_idx is None:
-                continue
+    #         if revenue_row_idx is None:
+    #             continue
                 
-            for month_col in month_columns:
-                if month_col < pome_month:
-                    filled_table.at[idx, month_col] = 0
-                else:
-                    current_month_index = month_columns.index(month_col)
-                    revenue_values = []
-                    for future_month in month_columns[current_month_index:]:
-                        revenue_values.append(filled_table.at[revenue_row_idx, future_month])
+    #         for month_col in month_columns:
+    #             if month_col < pome_month:
+    #                 filled_table.at[idx, month_col] = 0
+    #             else:
+    #                 current_month_index = month_columns.index(month_col)
+    #                 revenue_values = []
+    #                 for future_month in month_columns[current_month_index:]:
+    #                     revenue_values.append(filled_table.at[revenue_row_idx, future_month])
                     
-                    cumulative_sum = sum(revenue_values)
-                    filled_table.at[idx, month_col] = int(round(cumulative_sum, 0))
+    #                 cumulative_sum = sum(revenue_values)
+    #                 filled_table.at[idx, month_col] = int(round(cumulative_sum, 0))
     
     # Handle Retention Rate calculation
     for idx, row in filled_table.iterrows():
@@ -462,9 +462,9 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                     orders_sum = filtered_data['orders'].sum()
                     if cohort_size > 0:
                         retention_rate = (orders_sum / cohort_size) - 1
-                        filled_table.at[idx, month_col] = round(retention_rate*100, 2)
+                        filled_table.at[idx, month_col] = f"{round(retention_rate*100, 2):.2f}%"
                     else:
-                        filled_table.at[idx, month_col] = 0
+                        filled_table.at[idx, month_col] = "0.00%"
                 else:
                     active_customers_row_idx = None
                     for ac_idx, ac_row in filled_table.iterrows():
@@ -475,9 +475,9 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                     if active_customers_row_idx is not None and cohort_size > 0:
                         active_customers = filled_table.at[active_customers_row_idx, month_col]
                         retention_rate = active_customers / cohort_size
-                        filled_table.at[idx, month_col] = round(retention_rate*100, 4)
+                        filled_table.at[idx, month_col] = f"{round(retention_rate*100, 2):.2f}%"
                     else:
-                        filled_table.at[idx, month_col] = 0
+                        filled_table.at[idx, month_col] = "0.00%"
     
     # Handle LTV calculation
     for idx, row in filled_table.iterrows():
@@ -496,16 +496,55 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                             break
                     
                     if revenue_row_idx is not None and cohort_size > 0:
-                        revenue = filled_table.at[revenue_row_idx, month_col]
+                        revenue_str = filled_table.at[revenue_row_idx, month_col]
+                        # Extract numeric value from formatted revenue string
+                        if isinstance(revenue_str, str) and revenue_str.startswith('$'):
+                            revenue = float(revenue_str.replace('$', '').replace(',', ''))
+                        else:
+                            revenue = float(revenue_str) if revenue_str else 0
+                        
                         ltv = revenue / cohort_size
-                        filled_table.at[idx, month_col] = round(ltv, 2)
+                        filled_table.at[idx, month_col] = f"${round(ltv, 2):.2f}"
                     else:
-                        filled_table.at[idx, month_col] = 0
+                        filled_table.at[idx, month_col] = "$0.00"
     
     # Calculate Total column
     for idx, row in filled_table.iterrows():
-        total_value = sum([row[month] for month in month_columns])
-        filled_table.at[idx, 'Total'] = total_value
+        metric = row['Metric']
+        
+        if metric in ['Revenue', 'LTV']:
+            # Handle formatted monetary values
+            total_value = 0
+            for month in month_columns:
+                value_str = row[month]
+                if isinstance(value_str, str) and value_str.startswith('$'):
+                    value = float(value_str.replace('$', '').replace(',', ''))
+                elif isinstance(value_str, (int, float)):
+                    value = float(value_str)
+                else:
+                    value = 0
+                total_value += value
+            filled_table.at[idx, 'Total'] = f"${round(total_value, 2):.2f}"
+        elif metric == 'Retention Rate':
+            # Handle percentage values - calculate average retention rate
+            total_values = []
+            for month in month_columns:
+                value_str = row[month]
+                if isinstance(value_str, str) and value_str.endswith('%'):
+                    value = float(value_str.replace('%', ''))
+                    total_values.append(value)
+                elif isinstance(value_str, (int, float)):
+                    total_values.append(float(value_str))
+            
+            if total_values:
+                avg_retention = sum(total_values) / len(total_values)
+                filled_table.at[idx, 'Total'] = f"{round(avg_retention, 2):.2f}%"
+            else:
+                filled_table.at[idx, 'Total'] = "0.00%"
+        else:
+            # Handle count metrics (Active Customers, Quantities, Orders)
+            total_value = sum([row[month] for month in month_columns])
+            filled_table.at[idx, 'Total'] = total_value
     
     return filled_table, filter_msg
 
@@ -798,7 +837,7 @@ def create_download_link(df, filename, file_label):
 # Main Streamlit App
 def main():
     st.title("📊 LTV Calculation Dashboard")
-    st.markdown("Upload your CSV files and generate ProductRaw, ProductSummary, RawData, and Cohort Analysis")
+    st.markdown("Upload your CSV files and generate ProductRaw, ProductSummary, RawData, and User Lifecycle Analysis")
     
     # Sidebar for file upload
     st.sidebar.header("📁 File Upload")
@@ -857,7 +896,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "Cohort Analysis", "Retention & LTV Analysis", "User Breakdown Analysis"])
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -875,24 +914,24 @@ def main():
                 st.markdown(create_download_link(raw_data, "RawData.csv", "📥 Download RawData"), unsafe_allow_html=True)
             
             with tab4:
-                st.subheader("Cohort Analysis")
+                st.subheader("User Lifecycle Analysis")
                 
                 # Merchant SKU selection
                 available_skus = ["All"] + sorted(raw_data['merchant_sku'].unique().tolist())
                 selected_sku = st.selectbox(
-                    "Select Merchant SKU for Cohort Analysis:",
+                    "Select Merchant SKU for User Lifecycle Analysis:",
                     available_skus,
                     help="Choose a specific SKU or 'All' to analyze all SKUs together"
                 )
                 
                 # Calculate cohort analysis
-                with st.spinner(f"Calculating cohort analysis for {selected_sku}..."):
+                with st.spinner(f"Calculating User Lifecycle Analysis for {selected_sku}..."):
                     cohort_table, filter_msg = calculate_cohort_analysis(raw_data, selected_sku)
                 
                 st.info(filter_msg)
                 
                 # Display cohort table with scrolling
-                st.subheader("Cohort Analysis Results")
+                st.subheader("User Lifecycle Analysis Results")
                 st.dataframe(
                     cohort_table, 
                     use_container_width=True,
@@ -900,7 +939,7 @@ def main():
                 )
                 
                 # Download button for cohort analysis
-                st.markdown(create_download_link(cohort_table, f"Cohort_Analysis_{selected_sku}.csv", "📥 Download Cohort Analysis"), unsafe_allow_html=True)
+                st.markdown(create_download_link(cohort_table, f"Cohort_Analysis_{selected_sku}.csv", "📥 Download User Lifecycle Analysis"), unsafe_allow_html=True)
             
             with tab5:
                 st.header("📈 Retention & LTV Analysis")
@@ -1000,7 +1039,7 @@ def main():
                 st.subheader("💰 Cumulative LTV Analysis")
                 st.markdown("""
                 **Cumulative Lifetime Value Analysis** shows the cumulative LTV for each cohort across different months. 
-                This is calculated by taking the LTV values from the cohort analysis and showing them cumulatively from lowest month to highest month.
+                This is calculated by taking the LTV values from the User Lifecycle Analysis and showing them cumulatively from lowest month to highest month.
                 
                 💡 **How it works**: For each cohort, the LTV values are summed cumulatively across months, showing the total lifetime value accumulated over time.
                 """)
@@ -1071,11 +1110,11 @@ def main():
                             st.markdown(create_download_link(cumulative_ltv_table, "Cumulative_LTV_Analysis.csv", "📥 Download Cumulative LTV"), unsafe_allow_html=True)
                             
                         else:
-                            st.error("❌ Failed to calculate cumulative LTV analysis. Please ensure your cohort analysis contains LTV data.")
+                            st.error("❌ Failed to calculate cumulative LTV analysis. Please ensure your User Lifecycle Analysis contains LTV data.")
                             
                     except Exception as e:
                         st.error(f"❌ Error calculating cumulative LTV: {str(e)}")
-                        st.error("Please ensure your cohort analysis was calculated successfully and contains LTV metrics.")
+                        st.error("Please ensure your User Lifecycle Analysis was calculated successfully and contains LTV metrics.")
             
             with tab6:
                 st.header("👥 User Breakdown Analysis")
