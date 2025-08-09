@@ -7,6 +7,14 @@ from datetime import datetime
 import math
 import plotly.express as px
 import plotly.graph_objects as go
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+import tempfile
+import os
 
 # Set page config
 st.set_page_config(
@@ -308,7 +316,7 @@ def calculate_raw_data_wo_sku(combined_df, currency='USD'):
         how='left'
     )
 
-    output_tbl_wo_sku['buyer_email'] = output_tbl_wo_sku['buyer_email'].fillna('NA').drop_duplicates()
+    # output_tbl_wo_sku['buyer_email'] = output_tbl_wo_sku['buyer_email'].fillna('NA').drop_duplicates()
 
 
     # Group by and aggregate
@@ -827,6 +835,327 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     
     return fig
 
+def generate_pdf_report(cohort_table, selected_sku, raw_data, user_breakdown_df):
+    """Generate a comprehensive PDF report with LTV analysis"""
+    
+    # Create a temporary file
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    doc = SimpleDocTemplate(temp_file.name, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Get styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=30,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor('#1f77b4')
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        spaceAfter=12,
+        spaceBefore=20,
+        textColor=colors.HexColor('#2c3e50')
+    )
+    
+    subheading_style = ParagraphStyle(
+        'CustomSubheading',
+        parent=styles['Heading3'],
+        fontSize=14,
+        spaceAfter=10,
+        spaceBefore=15,
+        textColor=colors.HexColor('#34495e')
+    )
+    
+    body_style = ParagraphStyle(
+        'CustomBody',
+        parent=styles['Normal'],
+        fontSize=11,
+        spaceAfter=12,
+        alignment=TA_JUSTIFY,
+        textColor=colors.HexColor('#2c3e50')
+    )
+    
+    # Title
+    elements.append(Paragraph("Customer Lifetime Value (LTV) Analysis Report", title_style))
+    elements.append(Spacer(1, 20))
+    
+    # Date and SKU info
+    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y')}", body_style))
+    elements.append(Paragraph(f"Analysis Scope: {selected_sku if selected_sku != 'All' else 'All Products'}", body_style))
+    elements.append(Spacer(1, 30))
+    
+    # Executive Summary
+    elements.append(Paragraph("Executive Summary", heading_style))
+    
+    # Calculate key metrics from cohort data
+    ltv_data = cohort_table[cohort_table['Metric'] == 'LTV'].copy()
+    revenue_data = cohort_table[cohort_table['Metric'] == 'Revenue'].copy()
+    
+    if not ltv_data.empty:
+        month_columns = [col for col in ltv_data.columns if col not in ['POME Month', 'Cohort Size', 'Metric', 'Total']]
+        month_columns = sorted(month_columns)
+        
+        # Calculate LTV performance metrics
+        first_month_ltv_values = []
+        latest_ltv_values = []
+        total_customers = 0
+        
+        for _, row in ltv_data.iterrows():
+            pome_month = row['POME Month']
+            cohort_size = row['Cohort Size']
+            total_customers += cohort_size
+            
+            if pome_month in month_columns:
+                first_ltv_str = row[pome_month]
+                if isinstance(first_ltv_str, str) and first_ltv_str.startswith('$'):
+                    first_ltv = float(first_ltv_str.replace('$', '').replace(',', ''))
+                    if first_ltv > 0:
+                        first_month_ltv_values.append(first_ltv)
+                        
+                        # Get latest month LTV
+                        latest_ltv = 0
+                        for month_col in reversed(month_columns):
+                            if month_col >= pome_month:
+                                ltv_str = row[month_col]
+                                if isinstance(ltv_str, str) and ltv_str.startswith('$'):
+                                    ltv_val = float(ltv_str.replace('$', '').replace(',', ''))
+                                    if ltv_val > 0:
+                                        latest_ltv = ltv_val
+                                        break
+                        latest_ltv_values.append(latest_ltv)
+        
+        if first_month_ltv_values and latest_ltv_values:
+            avg_first_ltv = sum(first_month_ltv_values) / len(first_month_ltv_values)
+            avg_latest_ltv = sum(latest_ltv_values) / len(latest_ltv_values)
+            ltv_multiplier = avg_latest_ltv / avg_first_ltv if avg_first_ltv > 0 else 0
+            
+            # Performance assessment
+            if ltv_multiplier >= 7:
+                performance = "Elite"
+                assessment = "Your LTV performance is exceptional. This indicates strong product-market fit and excellent customer retention."
+            elif ltv_multiplier >= 4:
+                performance = "Healthy"
+                assessment = "Your LTV metrics show solid performance with good growth potential."
+            elif ltv_multiplier >= 2.5:
+                performance = "Moderate"
+                assessment = "Your LTV is acceptable but has significant room for improvement."
+            else:
+                performance = "Needs Improvement"
+                assessment = "LTV performance requires immediate attention to ensure sustainable growth."
+            
+            summary_text = f"""
+            This analysis covers {len(ltv_data)} customer cohorts representing {total_customers:,} total customers. 
+            The average first-month LTV is ${avg_first_ltv:.2f}, growing to ${avg_latest_ltv:.2f} over the tracking period, 
+            representing a {ltv_multiplier:.1f}× multiplier. This performance is classified as "{performance}". 
+            {assessment}
+            """
+            
+            elements.append(Paragraph(summary_text, body_style))
+            elements.append(Spacer(1, 20))
+    
+    # Theory Section
+    elements.append(Paragraph("Understanding Customer Lifetime Value", heading_style))
+    
+    theory_text = """
+    The Lifetime Value (LTV) is a critical metric used to value customers that a business acquires. 
+    It is a fundamental KPI used to analyze the health of our business's marketing efforts. In online retail, 
+    operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
+    
+    At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. 
+    The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be 
+    compared (apples to apples) to other businesses or customer acquisition channels. The LTV of a cohort of customers 
+    is calculated by grouping customers into a cohort and then tracking their purchases over time.
+    """
+    
+    elements.append(Paragraph(theory_text, body_style))
+    elements.append(Spacer(1, 15))
+    
+    # The Critical Trap
+    elements.append(Paragraph("The Critical Trap to Avoid", subheading_style))
+    
+    trap_text = """
+    <b>Very Important!</b> The LTV should be calculated for only one cohort of customers over a specific timeline. 
+    Some people fall into the "trap", where they take a dataset of customers (say 12 months of data), find the number 
+    of customers, the sum of purchases per customer, etc. This is flawed because the customers in the later months 
+    in that data set do not have a chance to repurchase. Therefore, you always need to think of LTV (and calculate it) 
+    over a specific time horizon and track the purchases of a particular group of customers over time.
+    """
+    
+    elements.append(Paragraph(trap_text, body_style))
+    elements.append(Spacer(1, 20))
+    
+    # Real-World Example
+    elements.append(Paragraph("Real-World Business Impact", subheading_style))
+    
+    example_text = """
+    <b>Case Study: Weight Loss Supplement Brand</b><br/>
+    • First Order AOV: $22<br/>
+    • Customer Acquisition Cost: $11 (ROAS of 2.0)<br/>
+    • Initial Assessment: Appeared unprofitable (50% of revenue spent on ads)<br/>
+    • 12-Month LTV: $105 (4.8× first purchase)<br/>
+    • Result: High LTV justified aggressive acquisition spending and confident scaling of marketing investment<br/><br/>
+    
+    This example demonstrates why LTV analysis is not just a dashboarding exercise—the objective is to leverage 
+    insights to support business growth.
+    """
+    
+    elements.append(Paragraph(example_text, body_style))
+    elements.append(Spacer(1, 20))
+    
+    # Strategic Use Cases
+    elements.append(Paragraph("Strategic Use Cases", subheading_style))
+    
+    use_cases_text = """
+    <b>1. Marketing ROI Optimization:</b> Diving deep into product-level LTV allows you to understand which products 
+    drive more retention and higher LTV, enabling you to allocate ad spending accordingly for long-term brand growth and profitability.<br/><br/>
+    
+    <b>2. Quality Control:</b> If your LTV analysis reveals your hero product has poor LTV (e.g., just 1.5× your first purchase AOV), 
+    you can investigate root causes (like low product ratings) and fix them before scaling with ads.<br/><br/>
+    
+    <b>3. Advanced Targeting:</b> Create custom audiences using these insights on Amazon Marketing Cloud (AMC) for both 
+    sponsored and DSP ads.<br/><br/>
+    
+    <b>4. Investment Decisions:</b> Compare LTV to CAC across channels to determine optimal budget allocation and identify 
+    the most profitable customer acquisition strategies.
+    """
+    
+    elements.append(Paragraph(use_cases_text, body_style))
+    elements.append(PageBreak())
+    
+    # Cohort Definition
+    elements.append(Paragraph("Our Cohort Definition", heading_style))
+    
+    cohort_def_text = """
+    We define cohorts as unique new-to-brand customers in a specific month who haven't purchased from your brand 
+    in the last 12 months (provided we have access to 24 months of data). We then measure how this specific group 
+    of people behave month over month for up to 12 months.
+    """
+    
+    elements.append(Paragraph(cohort_def_text, body_style))
+    elements.append(Spacer(1, 20))
+    
+    # Data Interpretation
+    elements.append(Paragraph("How to Read Your Cohort Analysis", heading_style))
+    
+    if not ltv_data.empty:
+        # Get first cohort for example
+        first_cohort = ltv_data.iloc[0]
+        pome_month = first_cohort['POME Month']
+        cohort_size = first_cohort['Cohort Size']
+        
+        # Find corresponding revenue data
+        revenue_row = revenue_data[revenue_data['POME Month'] == pome_month]
+        
+        interpretation_text = f"""
+        <b>Example: {pome_month} Cohort Analysis</b><br/><br/>
+        
+        This cohort represents {cohort_size} unique new-to-brand customers who made their first purchase in {pome_month}. 
+        Let's examine their behavior over time:<br/><br/>
+        
+        <b>First Month ({pome_month}):</b><br/>
+        """
+        
+        if not revenue_row.empty and pome_month in month_columns:
+            first_month_revenue = revenue_row.iloc[0][pome_month]
+            first_month_ltv = first_cohort[pome_month]
+            
+            interpretation_text += f"""
+            • Total Revenue: {first_month_revenue}<br/>
+            • LTV per Customer: {first_month_ltv}<br/>
+            • This represents the initial purchase behavior of this customer group.<br/><br/>
+            """
+        
+        # Show progression over time
+        if len(month_columns) > 1:
+            next_months = [col for col in month_columns[1:3] if col > pome_month]  # Next 2 months
+            for i, month in enumerate(next_months):
+                if month in first_cohort.index:
+                    month_ltv = first_cohort[month]
+                    interpretation_text += f"""
+                    <b>Month {i+2} ({month}):</b><br/>
+                    • Cumulative LTV per Customer: {month_ltv}<br/>
+                    • This shows how customer value grows through repeat purchases.<br/><br/>
+                    """
+        
+        elements.append(Paragraph(interpretation_text, body_style))
+        elements.append(Spacer(1, 20))
+    
+    # Performance Benchmarks
+    elements.append(Paragraph("Industry Performance Benchmarks", subheading_style))
+    
+    benchmarks_text = """
+    <b>Snacks/Pantry Products:</b><br/>
+    • Healthy Performance: 2.5-4× first purchase<br/>
+    • Best-in-Class: 4-5× first purchase<br/><br/>
+    
+    <b>Supplements:</b><br/>
+    • Healthy Performance: 4-7× first purchase<br/>
+    • Elite Performance: 7-9× first purchase<br/><br/>
+    
+    Use these benchmarks to assess your performance relative to industry standards and identify improvement opportunities.
+    """
+    
+    elements.append(Paragraph(benchmarks_text, body_style))
+    elements.append(Spacer(1, 30))
+    
+    # Key Insights and Recommendations
+    if 'ltv_multiplier' in locals():
+        elements.append(Paragraph("Strategic Recommendations", heading_style))
+        
+        if ltv_multiplier >= 7:
+            recommendations = """
+            <b>Elite Performance Detected!</b><br/>
+            Your LTV performance is in the top tier. Consider these growth strategies:<br/>
+            • Scale acquisition aggressively - your unit economics support it<br/>
+            • Expand to new customer segments with confidence<br/>
+            • Increase ad spend limits - customers are proving their long-term value<br/>
+            • Launch premium products - your customers show high lifetime value
+            """
+        elif ltv_multiplier >= 4:
+            recommendations = """
+            <b>Healthy Performance!</b><br/>
+            Your LTV metrics are solid. Optimization opportunities:<br/>
+            • Selective acquisition scaling in best-performing channels<br/>
+            • A/B test higher CAC limits - you have room to grow<br/>
+            • Focus on retention improvements to push into elite territory<br/>
+            • Analyze top-performing cohorts and replicate success factors
+            """
+        elif ltv_multiplier >= 2.5:
+            recommendations = """
+            <b>Moderate Performance</b><br/>
+            Your LTV is acceptable but has room for improvement:<br/>
+            • Prioritize retention initiatives before scaling acquisition<br/>
+            • Product experience optimization should be your focus<br/>
+            • Customer satisfaction surveys to identify improvement areas<br/>
+            • Conservative acquisition spending until LTV improves
+            """
+        else:
+            recommendations = """
+            <b>Performance Needs Immediate Attention</b><br/>
+            LTV below 2.5× indicates serious issues:<br/>
+            • Pause aggressive acquisition until fundamentals improve<br/>
+            • Deep-dive into product quality and customer experience<br/>
+            • Review pricing strategy - may be too high for value delivered<br/>
+            • Focus on existing customer retention before acquiring new ones<br/>
+            • Investigate root causes: reviews, ratings, competitor analysis
+            """
+        
+        elements.append(Paragraph(recommendations, body_style))
+    
+    # Build PDF
+    doc.build(elements)
+    temp_file.close()
+    
+    return temp_file.name
+
 def create_download_link(df, filename, file_label):
     """Create a download link for a dataframe"""
     csv = df.to_csv(index=False)
@@ -896,7 +1225,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis"])
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis", "📄 PDF Report"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -1248,6 +1577,168 @@ def main():
                 else:
                     st.warning("No user breakdown data available for the selected criteria.")
                     st.info("Please ensure you have processed data with valid purchase dates and user information.")
+            
+            with tab7:
+                st.header("📄 Comprehensive LTV Analysis Report")
+                st.markdown("""
+                Generate a professional PDF report that includes:
+                - **Executive Summary** with key performance metrics
+                - **LTV Theory & Methodology** explained with real-world examples
+                - **Strategic Use Cases** and business applications
+                - **Data Interpretation Guide** with specific examples from your data
+                - **Industry Benchmarks** and performance assessment
+                - **Strategic Recommendations** based on your LTV performance
+                """)
+                
+                # SKU selection for report
+                st.subheader("📊 Report Configuration")
+                available_skus_report = ["All"] + sorted(raw_data['merchant_sku'].unique().tolist())
+                selected_sku_report = st.selectbox(
+                    "Select Merchant SKU for Report:",
+                    available_skus_report,
+                    help="Choose a specific SKU or 'All' to include in the comprehensive report",
+                    key="report_sku_selector"
+                )
+                
+                # Calculate cohort analysis for the report
+                with st.spinner(f"Preparing report data for {selected_sku_report}..."):
+                    cohort_table_report, filter_msg_report = calculate_cohort_analysis(raw_data, selected_sku_report)
+                    user_breakdown_report = calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_sku_report)
+                
+                st.info(filter_msg_report)
+                
+                # Report preview
+                st.subheader("📋 Report Preview")
+                
+                # Show key metrics that will be in the report
+                ltv_data_preview = cohort_table_report[cohort_table_report['Metric'] == 'LTV'].copy()
+                if not ltv_data_preview.empty:
+                    month_columns_preview = [col for col in ltv_data_preview.columns if col not in ['POME Month', 'Cohort Size', 'Metric', 'Total']]
+                    month_columns_preview = sorted(month_columns_preview)
+                    
+                    # Calculate preview metrics
+                    first_month_ltv_values_preview = []
+                    latest_ltv_values_preview = []
+                    total_customers_preview = 0
+                    
+                    for _, row in ltv_data_preview.iterrows():
+                        pome_month = row['POME Month']
+                        cohort_size = row['Cohort Size']
+                        total_customers_preview += cohort_size
+                        
+                        if pome_month in month_columns_preview:
+                            first_ltv_str = row[pome_month]
+                            if isinstance(first_ltv_str, str) and first_ltv_str.startswith('$'):
+                                first_ltv = float(first_ltv_str.replace('$', '').replace(',', ''))
+                                if first_ltv > 0:
+                                    first_month_ltv_values_preview.append(first_ltv)
+                                    
+                                    # Get latest month LTV
+                                    latest_ltv = 0
+                                    for month_col in reversed(month_columns_preview):
+                                        if month_col >= pome_month:
+                                            ltv_str = row[month_col]
+                                            if isinstance(ltv_str, str) and ltv_str.startswith('$'):
+                                                ltv_val = float(ltv_str.replace('$', '').replace(',', ''))
+                                                if ltv_val > 0:
+                                                    latest_ltv = ltv_val
+                                                    break
+                                    latest_ltv_values_preview.append(latest_ltv)
+                    
+                    if first_month_ltv_values_preview and latest_ltv_values_preview:
+                        avg_first_ltv_preview = sum(first_month_ltv_values_preview) / len(first_month_ltv_values_preview)
+                        avg_latest_ltv_preview = sum(latest_ltv_values_preview) / len(latest_ltv_values_preview)
+                        ltv_multiplier_preview = avg_latest_ltv_preview / avg_first_ltv_preview if avg_first_ltv_preview > 0 else 0
+                        
+                        # Display preview metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Cohorts Analyzed", len(ltv_data_preview))
+                        with col2:
+                            st.metric("Total Customers", f"{total_customers_preview:,}")
+                        with col3:
+                            st.metric("Avg First Month LTV", f"${avg_first_ltv_preview:.2f}")
+                        with col4:
+                            st.metric("LTV Multiplier", f"{ltv_multiplier_preview:.1f}×")
+                        
+                        # Performance indicator
+                        if ltv_multiplier_preview >= 7:
+                            st.success("🏆 **Elite Performance** - Your report will highlight exceptional LTV metrics!")
+                        elif ltv_multiplier_preview >= 4:
+                            st.success("✅ **Healthy Performance** - Strong metrics to showcase in your report!")
+                        elif ltv_multiplier_preview >= 2.5:
+                            st.warning("⚠️ **Moderate Performance** - Report will include improvement recommendations!")
+                        else:
+                            st.error("❌ **Needs Improvement** - Report will focus on actionable insights for growth!")
+                
+                st.markdown("---")
+                
+                # Generate PDF button
+                st.subheader("📄 Generate PDF Report")
+                
+                if st.button("🚀 Generate Comprehensive PDF Report", type="primary"):
+                    with st.spinner("Generating comprehensive PDF report... This may take a moment."):
+                        try:
+                            # Generate the PDF report
+                            pdf_path = generate_pdf_report(cohort_table_report, selected_sku_report, raw_data, user_breakdown_report)
+                            
+                            # Read the PDF file
+                            with open(pdf_path, "rb") as pdf_file:
+                                pdf_bytes = pdf_file.read()
+                            
+                            # Provide download button
+                            st.success("✅ Report generated successfully!")
+                            st.download_button(
+                                label="📥 Download PDF Report",
+                                data=pdf_bytes,
+                                file_name=f"LTV_Analysis_Report_{selected_sku_report}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                mime="application/pdf"
+                            )
+                            
+                            # Clean up temporary file
+                            os.unlink(pdf_path)
+                            
+                            st.info("💡 **Tip**: This report is perfect for sharing with stakeholders, investors, or your marketing team to demonstrate the strategic value of your customer acquisition efforts.")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error generating PDF report: {str(e)}")
+                            st.info("Please ensure all data has been calculated successfully and try again.")
+                
+                # Report contents description
+                st.markdown("### 📋 What's Included in Your Report")
+                st.markdown("""
+                **1. Executive Summary**
+                - Key performance metrics and LTV multiplier analysis
+                - Performance classification (Elite, Healthy, Moderate, Needs Improvement)
+                - Strategic assessment of your business health
+                
+                **2. LTV Theory & Methodology**
+                - Comprehensive explanation of why LTV matters
+                - Common calculation traps and how to avoid them
+                - Real-world case study examples
+                
+                **3. Strategic Business Applications**
+                - Marketing ROI optimization strategies
+                - Quality control and product improvement insights
+                - Advanced targeting opportunities
+                - Investment decision frameworks
+                
+                **4. Data Interpretation Guide**
+                - Step-by-step explanation using your actual data
+                - How to read cohort progression over time
+                - Key insights and patterns to look for
+                
+                **5. Industry Benchmarks**
+                - Performance standards for snacks/pantry (2.5-4× healthy, 4-5× best-in-class)
+                - Performance standards for supplements (4-7× healthy, 7-9× elite)
+                - Competitive positioning analysis
+                
+                **6. Strategic Recommendations**
+                - Customized action items based on your performance level
+                - Specific next steps for business growth
+                - Risk mitigation strategies
+                - Scaling opportunities
+                """)
             
             # Download all results as ZIP
             st.header("📦 Download All Results")
