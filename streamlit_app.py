@@ -717,6 +717,247 @@ def retention_calculation_v2(raw_data, cohort_table):
     
     return retention_table
 
+def create_product_ltv_table(product_raw, raw_data):
+    """Create Product LTV table from merchant_sku data similar to the image format"""
+    
+    # Get unique merchant SKUs and create base structure
+    merchant_sku_df = pd.DataFrame({"merchant_sku": list(product_raw['merchant_sku'].unique())})
+    
+    # Calculate users for each merchant SKU where months == 0 (first month)
+    merchant_sku_df['users'] = merchant_sku_df.apply(
+        lambda x: product_raw[(product_raw['months'] == 0) & (product_raw['merchant_sku'] == x['merchant_sku'])]['users'].sum(), 
+        axis=1
+    )
+    
+    # Rank by users (use 'first' method to handle ties and ensure unique ranks)
+    merchant_sku_df['rank_users'] = merchant_sku_df['users'].rank(ascending=False, method='first', na_option='keep')
+    
+    # Set cohort equal to users
+    merchant_sku_df['cohort'] = merchant_sku_df['users']
+    
+    # Reset index to ensure clean indexing
+    merchant_sku_df = merchant_sku_df.reset_index(drop=True)
+    
+    # Get product titles from RawData
+    def get_product_title(sku):
+        """Get product title for a given SKU"""
+        try:
+            matching_rows = raw_data[raw_data['merchant_sku'] == sku]
+            if not matching_rows.empty:
+                return matching_rows['pntb_title'].iloc[0]
+            else:
+                return "Unknown Product"
+        except:
+            return "Unknown Product"
+    
+    # Apply the lookup safely
+    merchant_sku_df['pntb_title'] = merchant_sku_df['merchant_sku'].apply(get_product_title)
+    
+    # Get top products by cohort size (top 10 for analysis)
+    top_products = merchant_sku_df.sort_values('users', ascending=False).head(10)
+    
+    final_table = []
+    
+    for idx, (_, product_row) in enumerate(top_products.iterrows(), 1):
+        sku = product_row['merchant_sku']
+        cohort_size = product_row['users']
+        product_title = product_row['pntb_title']
+        
+        # Get ProductRaw data for this SKU
+        sku_data = product_raw[product_raw['merchant_sku'] == sku].copy()
+        
+        # Create the main product entry with all metrics
+        product_entry = {
+            '#': idx,
+            'Product Title': product_title,
+            'Cohort Size': cohort_size,
+            'Merchant SKU': sku
+        }
+        
+        # Add month columns (Month 1 through Month 12)
+        for month_num in range(1, 13):
+            month_idx = month_num - 1  # Convert to 0-based for data lookup
+            month_data = sku_data[sku_data['months'] == month_idx]
+            
+            # Initialize all metrics for this month
+            active_customers = month_data['users'].sum() if not month_data.empty else 0
+            purchases = month_data['orders'].sum() if not month_data.empty else 0  
+            revenue = int(month_data['sales'].sum()) if not month_data.empty else 0
+            
+            # Calculate cumulative revenue
+            cumulative_revenue = 0
+            for cum_month in range(0, month_idx + 1):
+                cum_data = sku_data[sku_data['months'] == cum_month]
+                cumulative_revenue += cum_data['sales'].sum() if not cum_data.empty else 0
+            cumulative_revenue = int(cumulative_revenue)
+            
+            # Calculate retention rate
+            retention_rate = round((active_customers / cohort_size * 100), 2) if cohort_size > 0 else 0.00
+            
+            # Calculate LTV
+            ltv = round(revenue / cohort_size, 2) if cohort_size > 0 else 0.00
+            
+            # Store all metrics for this month in a structured way
+            product_entry[f'Month {month_num}'] = {
+                'Active Customers': active_customers,
+                'Purchases': purchases,
+                'Revenue': revenue,
+                'Cumulative Revenue': cumulative_revenue,
+                'Retention Rate': retention_rate,
+                'LTV': ltv
+            }
+        
+        final_table.append(product_entry)
+    
+    return final_table
+
+def export_product_ltv_table(product_ltv_data):
+    """Export Product LTV table in the exact format shown in the image"""
+    
+    # Create the structured table for CSV export
+    csv_rows = []
+    
+    for product in product_ltv_data:
+        # Add each metric as a separate row
+        metrics = ['Active Customers', 'Purchases', 'Revenue', 'Cumulative Revenue', 'Retention Rate', 'LTV']
+        
+        for metric in metrics:
+            metric_row = {
+                '#': product['#'] if metric == 'Active Customers' else '',  # Only show # on first metric row
+                'Product Title': product['Product Title'] if metric == 'Active Customers' else '',  # Only show title on first metric row  
+                'Cohort Size': product['Cohort Size'] if metric == 'Active Customers' else '',  # Only show cohort size on first metric row
+                'Merchant SKU': product['Merchant SKU'] if metric == 'Active Customers' else '',  # Only show SKU on first metric row
+                'Metric': metric
+            }
+            
+            # Add values for each month
+            for month_num in range(1, 13):
+                value = product[f'Month {month_num}'][metric]
+                if metric == 'Retention Rate':
+                    metric_row[f'Month {month_num}'] = f"{value}%"
+                elif metric == 'LTV':
+                    metric_row[f'Month {month_num}'] = f"${value}"
+                else:
+                    metric_row[f'Month {month_num}'] = value
+            
+            csv_rows.append(metric_row)
+    
+    # Convert to DataFrame
+    export_df = pd.DataFrame(csv_rows)
+    
+    return export_df
+
+def calculate_top_products_tables(product_raw, raw_data):
+    """Calculate the 4 top products tables: Acquired Customers, Repeat Rate, AOV, LTV"""
+    
+    # Get unique merchant SKUs and create base structure
+    merchant_sku_df = pd.DataFrame({"merchant_sku": list(product_raw['merchant_sku'].unique())})
+    
+    # Get product titles from RawData
+    def get_product_title(sku):
+        try:
+            matching_rows = raw_data[raw_data['merchant_sku'] == sku]
+            if not matching_rows.empty:
+                return matching_rows['pntb_title'].iloc[0]
+            else:
+                return sku  # Use SKU if no title found
+        except:
+            return sku
+    
+    merchant_sku_df['product_title'] = merchant_sku_df['merchant_sku'].apply(get_product_title)
+    
+    # 1. Top 10 Products by Acquired Customers (Month 0 users)
+    acquired_customers = []
+    for _, row in merchant_sku_df.iterrows():
+        sku = row['merchant_sku']
+        title = row['product_title']
+        
+        # Get first month (month 0) users
+        first_month_data = product_raw[(product_raw['merchant_sku'] == sku) & (product_raw['months'] == 0)]
+        acquired = first_month_data['users'].sum() if not first_month_data.empty else 0
+        
+        acquired_customers.append({
+            'Product Title': title,
+            'Merchant SKU': sku,
+            'Acquired Customers': acquired
+        })
+    
+    top_acquired = sorted(acquired_customers, key=lambda x: x['Acquired Customers'], reverse=True)[:10]
+    
+    # 2. Top 10 Products by Repeat Rate
+    repeat_rates = []
+    for _, row in merchant_sku_df.iterrows():
+        sku = row['merchant_sku']
+        title = row['product_title']
+        
+        # Calculate repeat rate: (total customers - first month customers) / first month customers
+        sku_data = product_raw[product_raw['merchant_sku'] == sku]
+        first_month_users = sku_data[sku_data['months'] == 0]['users'].sum()
+        total_users = sku_data['users'].sum()
+        
+        if first_month_users > 0:
+            repeat_customers = total_users - first_month_users
+            repeat_rate = (repeat_customers / first_month_users) * 100
+        else:
+            repeat_rate = 0
+        
+        repeat_rates.append({
+            'Product Title': title,
+            'Merchant SKU': sku,
+            'Repeat Rate': f"{repeat_rate:.2f}%"
+        })
+    
+    top_repeat = sorted(repeat_rates, key=lambda x: float(x['Repeat Rate'].replace('%', '')), reverse=True)[:10]
+    
+    # 3. Top 10 Products by AOV (Average Order Value)
+    aovs = []
+    for _, row in merchant_sku_df.iterrows():
+        sku = row['merchant_sku']
+        title = row['product_title']
+        
+        # Calculate AOV: total sales / total orders
+        sku_data = product_raw[product_raw['merchant_sku'] == sku]
+        total_sales = sku_data['sales'].sum()
+        total_orders = sku_data['orders'].sum()
+        
+        aov = total_sales / total_orders if total_orders > 0 else 0
+        
+        aovs.append({
+            'Product Title': title,
+            'Merchant SKU': sku,
+            'AOV': f"${aov:.2f}"
+        })
+    
+    top_aov = sorted(aovs, key=lambda x: float(x['AOV'].replace('$', '')), reverse=True)[:10]
+    
+    # 4. Top 10 Products by LTV (Latest month LTV)
+    ltvs = []
+    for _, row in merchant_sku_df.iterrows():
+        sku = row['merchant_sku']
+        title = row['product_title']
+        
+        # Calculate LTV: total sales / first month users
+        sku_data = product_raw[product_raw['merchant_sku'] == sku]
+        total_sales = sku_data['sales'].sum()
+        first_month_users = sku_data[sku_data['months'] == 0]['users'].sum()
+        
+        ltv = total_sales / first_month_users if first_month_users > 0 else 0
+        
+        ltvs.append({
+            'Product Title': title,
+            'Merchant SKU': sku,
+            'LTV': f"${ltv:.2f}"
+        })
+    
+    top_ltv = sorted(ltvs, key=lambda x: float(x['LTV'].replace('$', '')), reverse=True)[:10]
+    
+    return {
+        'top_acquired': top_acquired,
+        'top_repeat': top_repeat,
+        'top_aov': top_aov,
+        'top_ltv': top_ltv
+    }
+
 def calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_merchant_sku=None):
     """
     Calculate old users vs new users breakdown based on merchant SKU selection
@@ -1225,7 +1466,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis", "📄 PDF Report"])
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis", "📊 Product LTV Analysis", "📄 PDF Report"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -1579,6 +1820,132 @@ def main():
                     st.info("Please ensure you have processed data with valid purchase dates and user information.")
             
             with tab7:
+                st.header("📊 Product LTV Analysis")
+                st.markdown("""
+                **Product-level LTV Analysis** provides detailed insights into the lifetime value performance of each product (merchant SKU).
+                This analysis helps answer key questions:
+                - Which products drive the highest customer lifetime value?
+                - How do different products perform in terms of retention and repeat purchases?
+                - What are the monthly progression patterns for each product?
+                """)
+                
+                # Product LTV Analysis Section
+                st.subheader("🎯 Product Performance Analysis")
+                
+                with st.spinner("Calculating Product LTV Analysis..."):
+                    try:
+                        # Create product LTV table
+                        product_ltv_data = create_product_ltv_table(product_raw, raw_data)
+                        
+                        if product_ltv_data:
+                            st.success(f"✅ Product LTV Analysis completed for {len(product_ltv_data)} top products!")
+                            
+                            # Display key metrics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                total_products_analyzed = len(product_ltv_data)
+                                st.metric("Products Analyzed", total_products_analyzed)
+                            with col2:
+                                total_cohort_size = sum([product['Cohort Size'] for product in product_ltv_data])
+                                st.metric("Total Customers", f"{total_cohort_size:,}")
+                            with col3:
+                                avg_cohort_size = total_cohort_size / total_products_analyzed if total_products_analyzed > 0 else 0
+                                st.metric("Avg Cohort Size", f"{avg_cohort_size:.0f}")
+                            
+                            # Display the complete Product LTV data
+                            st.subheader("📊 Complete Product LTV Analysis")
+                            st.markdown("**Detailed monthly metrics for all analyzed products**")
+                            
+                            # Generate the exportable table for display
+                            display_df = export_product_ltv_table(product_ltv_data)
+                            
+                            # Show the complete table
+                            st.dataframe(display_df, use_container_width=True, height=600)
+                            
+                            # Export functionality
+                            st.subheader("📥 Export Product LTV Analysis")
+                            
+                            # Generate the exportable table
+                            export_df = export_product_ltv_table(product_ltv_data)
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.info(f"📊 Export contains {len(export_df)} rows with detailed monthly metrics for each product")
+                            with col2:
+                                st.info("📋 Includes: Active Customers, Purchases, Revenue, Cumulative Revenue, Retention Rate, LTV")
+                            
+                            # Download button for the detailed export
+                            st.markdown(create_download_link(export_df, "Product_LTV_Analysis.csv", "📥 Download Product LTV Analysis"), unsafe_allow_html=True)
+                            
+                            # Show preview of export structure
+                            with st.expander("👁️ Preview Export Structure"):
+                                st.markdown("**First 20 rows of the export table:**")
+                                st.dataframe(export_df.head(20), use_container_width=True)
+                            
+                            # Add the Top Products Dashboard
+                            st.markdown("---")
+                            st.subheader("📊 Top Products Dashboard")
+                            st.markdown("**Key performance metrics across all products in your portfolio**")
+                            
+                            # Calculate the top products tables
+                            top_products_data = calculate_top_products_tables(product_raw, raw_data)
+                            
+                            # Display in 2x2 grid
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("##### 🎯 Top 10 Products by Acquired Customers")
+                                acquired_df = pd.DataFrame(top_products_data['top_acquired'])
+                                # Add ranking
+                                acquired_df.insert(0, 'Rank', range(1, len(acquired_df) + 1))
+                                st.dataframe(acquired_df, use_container_width=True, height=350)
+                                
+                            with col2:
+                                st.markdown("##### 🔄 Top 10 Products by Repeat Rate")
+                                repeat_df = pd.DataFrame(top_products_data['top_repeat'])
+                                # Add ranking
+                                repeat_df.insert(0, 'Rank', range(1, len(repeat_df) + 1))
+                                st.dataframe(repeat_df, use_container_width=True, height=350)
+                            
+                            col3, col4 = st.columns(2)
+                            
+                            with col3:
+                                st.markdown("##### 💰 Top 10 Products by AOV")
+                                aov_df = pd.DataFrame(top_products_data['top_aov'])
+                                # Add ranking
+                                aov_df.insert(0, 'Rank', range(1, len(aov_df) + 1))
+                                st.dataframe(aov_df, use_container_width=True, height=350)
+                                
+                            with col4:
+                                st.markdown("##### 📈 Top 10 Products by LTV")
+                                ltv_df = pd.DataFrame(top_products_data['top_ltv'])
+                                # Add ranking
+                                ltv_df.insert(0, 'Rank', range(1, len(ltv_df) + 1))
+                                st.dataframe(ltv_df, use_container_width=True, height=350)
+                            
+                            # Download all top products tables
+                            st.subheader("📥 Download Top Products Analysis")
+                            
+                            # Create a combined Excel-style export
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.markdown(create_download_link(acquired_df, "Top_Products_Acquired_Customers.csv", "📥 Acquired Customers"), unsafe_allow_html=True)
+                            with col2:
+                                st.markdown(create_download_link(repeat_df, "Top_Products_Repeat_Rate.csv", "📥 Repeat Rate"), unsafe_allow_html=True)
+                            with col3:
+                                st.markdown(create_download_link(aov_df, "Top_Products_AOV.csv", "📥 AOV"), unsafe_allow_html=True)
+                            with col4:
+                                st.markdown(create_download_link(ltv_df, "Top_Products_LTV.csv", "📥 LTV"), unsafe_allow_html=True)
+                            
+                        else:
+                            st.error("❌ Failed to generate Product LTV Analysis. Please ensure ProductRaw data is available.")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error calculating Product LTV Analysis: {str(e)}")
+                        st.error("Please ensure ProductRaw and RawData have been calculated successfully.")
+            
+            with tab8:
                 st.header("📄 Comprehensive LTV Analysis Report")
                 st.markdown("""
                 Generate a professional PDF report that includes:
@@ -1771,7 +2138,7 @@ def main():
                     # Add user breakdown analysis if available
                     try:
                         # Use the "All" option for ZIP download to include comprehensive data
-                        user_breakdown = calculate_user_breakdown(raw_data, "All")
+                        user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, "All")
                         if not user_breakdown.empty:
                             display_breakdown = user_breakdown.copy()
                             display_breakdown['month'] = display_breakdown['month'].dt.strftime('%Y-%m-%d')
@@ -1787,6 +2154,38 @@ def main():
                             zip_file.writestr("User_Breakdown_Analysis.csv", display_breakdown.to_csv(index=False))
                     except:
                         pass  # Skip if user breakdown calculation fails
+                    
+                    # Add Product LTV Analysis if available
+                    try:
+                        product_ltv_data = create_product_ltv_table(product_raw, raw_data)
+                        if product_ltv_data:
+                            product_ltv_export = export_product_ltv_table(product_ltv_data)
+                            zip_file.writestr("Product_LTV_Analysis.csv", product_ltv_export.to_csv(index=False))
+                    except:
+                        pass  # Skip if Product LTV calculation fails
+                    
+                    # Add Top Products Tables if available
+                    try:
+                        top_products_data = calculate_top_products_tables(product_raw, raw_data)
+                        
+                        # Add each top products table
+                        acquired_df = pd.DataFrame(top_products_data['top_acquired'])
+                        acquired_df.insert(0, 'Rank', range(1, len(acquired_df) + 1))
+                        zip_file.writestr("Top_Products_Acquired_Customers.csv", acquired_df.to_csv(index=False))
+                        
+                        repeat_df = pd.DataFrame(top_products_data['top_repeat'])
+                        repeat_df.insert(0, 'Rank', range(1, len(repeat_df) + 1))
+                        zip_file.writestr("Top_Products_Repeat_Rate.csv", repeat_df.to_csv(index=False))
+                        
+                        aov_df = pd.DataFrame(top_products_data['top_aov'])
+                        aov_df.insert(0, 'Rank', range(1, len(aov_df) + 1))
+                        zip_file.writestr("Top_Products_AOV.csv", aov_df.to_csv(index=False))
+                        
+                        ltv_df = pd.DataFrame(top_products_data['top_ltv'])
+                        ltv_df.insert(0, 'Rank', range(1, len(ltv_df) + 1))
+                        zip_file.writestr("Top_Products_LTV.csv", ltv_df.to_csv(index=False))
+                    except:
+                        pass  # Skip if Top Products calculation fails
                 
                 zip_buffer.seek(0)
                 
