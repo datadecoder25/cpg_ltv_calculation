@@ -1094,7 +1094,7 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     return fig
 
 def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, user_breakdown_df, selected_product_sku, product_title):
-    """Generate a comprehensive PDF report for a specific product including all analysis tabs"""
+    """Generate a clean PDF report showing cohort_table and user_breakdown_df for top 10 products"""
     
     # Create a temporary file
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -1107,394 +1107,134 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
+        parent=styles['Title'],
+        fontSize=20,
         spaceAfter=30,
         alignment=TA_CENTER,
-        textColor=colors.HexColor('#1f77b4')
+        textColor=colors.HexColor('#2c3e50')
     )
     
     heading_style = ParagraphStyle(
         'CustomHeading',
         parent=styles['Heading2'],
-        fontSize=16,
-        spaceAfter=12,
-        spaceBefore=20,
-        textColor=colors.HexColor('#2c3e50')
+        fontSize=14,
+        spaceAfter=15,
+        spaceBefore=25,
+        textColor=colors.HexColor('#34495e')
     )
     
     subheading_style = ParagraphStyle(
         'CustomSubheading',
         parent=styles['Heading3'],
-        fontSize=14,
+        fontSize=12,
         spaceAfter=10,
         spaceBefore=15,
-        textColor=colors.HexColor('#34495e')
-    )
-    
-    body_style = ParagraphStyle(
-        'CustomBody',
-        parent=styles['Normal'],
-        fontSize=11,
-        spaceAfter=12,
-        alignment=TA_JUSTIFY,
         textColor=colors.HexColor('#2c3e50')
     )
     
-    # Title
-    elements.append(Paragraph(f"Comprehensive Product Analysis Report", title_style))
-    elements.append(Paragraph(f"{product_title}", subheading_style))
-    elements.append(Spacer(1, 20))
-    
-    # Date and product info
-    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y')}", body_style))
-    elements.append(Paragraph(f"Product SKU: {selected_product_sku}", body_style))
+    # Title Page
+    elements.append(Paragraph("Top 10 Products - Data Report", title_style))
     elements.append(Spacer(1, 30))
     
-    # Executive Summary
-    elements.append(Paragraph("Executive Summary", heading_style))
+    # Get top 10 products by acquired customers
+    top_products_data = calculate_top_products_tables(product_raw, raw_data)
+    top_10_products = top_products_data['top_acquired'][:10]
     
-    # Get product-specific data
-    product_data = product_raw[product_raw['merchant_sku'] == selected_product_sku]
-    
-    if not product_data.empty:
-        # Calculate key metrics
-        total_customers = product_data[product_data['months'] == 0]['users'].sum()
-        total_revenue = product_data['sales'].sum()
-        total_orders = product_data['orders'].sum()
-        avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
-        ltv = total_revenue / total_customers if total_customers > 0 else 0
-        
-        # Calculate repeat rate
-        first_month_customers = product_data[product_data['months'] == 0]['users'].sum()
-        total_unique_customers = product_data['users'].sum()
-        repeat_customers = total_unique_customers - first_month_customers
-        repeat_rate = (repeat_customers / first_month_customers * 100) if first_month_customers > 0 else 0
-        
-        summary_text = f"""
-        This comprehensive analysis covers the complete performance profile of {product_title}. 
-        
-        <b>Key Performance Metrics:</b><br/>
-        • Total Acquired Customers: {total_customers:,}<br/>
-        • Total Revenue Generated: ${total_revenue:,.2f}<br/>
-        • Total Orders: {total_orders:,}<br/>
-        • Average Order Value: ${avg_order_value:.2f}<br/>
-        • Customer Lifetime Value: ${ltv:.2f}<br/>
-        • Repeat Purchase Rate: {repeat_rate:.2f}%<br/><br/>
-        
-        This product shows {"strong" if ltv > 50 else "moderate" if ltv > 20 else "developing"} LTV performance 
-        with {"excellent" if repeat_rate > 30 else "good" if repeat_rate > 15 else "developing"} customer retention metrics.
-        """
-        
-        elements.append(Paragraph(summary_text, body_style))
-        elements.append(Spacer(1, 20))
-    
-    # Product Raw Data Analysis
-    elements.append(Paragraph("Product Performance Analysis", heading_style))
-    elements.append(Paragraph("Monthly Cohort Progression", subheading_style))
-    
-    # Create table for product data
-    if not product_data.empty:
-        table_data = [['Month', 'Active Customers', 'Orders', 'Revenue', 'Cumulative Revenue']]
-        cumulative_revenue = 0
-        
-        for month in sorted(product_data['months'].unique()):
-            month_data = product_data[product_data['months'] == month]
-            customers = month_data['users'].sum()
-            orders = month_data['orders'].sum()
-            revenue = month_data['sales'].sum()
-            cumulative_revenue += revenue
-            
-            table_data.append([
-                f"Month {int(month) + 1}",
-                f"{customers:,}",
-                f"{orders:,}",
-                f"${revenue:,.2f}",
-                f"${cumulative_revenue:,.2f}"
-            ])
-        
-        # Create table
-        table = Table(table_data, colWidths=[1*inch, 1.2*inch, 1*inch, 1.2*inch, 1.4*inch])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F9FA')])
-        ]))
-        
-        elements.append(table)
-        elements.append(Spacer(1, 20))
-    
-    # User Lifecycle Analysis for Top 10 Products
-    elements.append(Paragraph("User Lifecycle Analysis for Top 10 Products", heading_style))
-    elements.append(Paragraph("Complete product LTV analysis tables for each top-performing product", subheading_style))
-    
-    # Create product LTV data for top 10 products
-    product_ltv_data = create_product_ltv_table(product_raw, raw_data)
-    
-    for i, product in enumerate(product_ltv_data, 1):
+    # For each of the top 10 products, show their cohort table and user breakdown
+    for i, product in enumerate(top_10_products, 1):
         product_sku = product['Merchant SKU']
         product_title = product['Product Title']
-        cohort_size = product['Cohort Size']
         
         elements.append(PageBreak())
-        elements.append(Paragraph(f"{i}. {product_title}", subheading_style))
-        elements.append(Paragraph(f"SKU: {product_sku} | Cohort Size: {cohort_size:,}", body_style))
+        elements.append(Paragraph(f"{i}. {product_title}", heading_style))
+        elements.append(Paragraph(f"SKU: {product_sku}", subheading_style))
         elements.append(Spacer(1, 15))
         
-        # Create comprehensive table for this product showing all metrics across months
-        metrics = ['Active Customers', 'Purchases', 'Revenue', 'Cumulative Revenue', 'Retention Rate', 'LTV']
-        
-        # Create table data with metrics as rows and months as columns
-        table_data = [['Metric'] + [f'Month {j}' for j in range(1, 13)]]  # Header row
-        
-        for metric in metrics:
-            row_data = [metric]
-            for month_num in range(1, 13):
-                value = product[f'Month {month_num}'][metric]
+        # Calculate cohort analysis for this specific product
+        try:
+            product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+            
+            if not product_cohort_table.empty:
+                elements.append(Paragraph("Cohort Analysis Table", subheading_style))
                 
-                # Format the value appropriately
-                if metric == 'Retention Rate':
-                    formatted_value = f"{value}%"
-                elif metric == 'LTV':
-                    formatted_value = f"${value}"
-                elif metric in ['Revenue', 'Cumulative Revenue']:
-                    formatted_value = f"${value:,}" if value > 0 else "-"
-                else:
-                    formatted_value = f"{value:,}" if value > 0 else "-"
+                # Convert cohort table to list format for ReportLab Table
+                cohort_data = [list(product_cohort_table.columns)]  # Header row
+                for _, row in product_cohort_table.iterrows():
+                    cohort_data.append([str(cell) for cell in row])
                 
-                row_data.append(formatted_value)
-            
-            table_data.append(row_data)
-        
-        # Create the table
-        col_widths = [1.2*inch] + [0.5*inch] * 12  # Metric column wider, month columns smaller
-        
-        product_table = Table(table_data, colWidths=col_widths)
-        
-        # Apply styling
-        product_table.setStyle(TableStyle([
-            # Header row styling
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            
-            # Metric column styling
-            ('BACKGROUND', (0, 1), (0, -1), colors.HexColor('#E8F1FF')),
-            ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
-            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
-            
-            # Data cells styling
-            ('BACKGROUND', (1, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            
-            # Row-wise color coding for different metrics
-            ('ROWBACKGROUNDS', (1, 1), (-1, 1), [colors.HexColor('#FFF2E8')]),  # Active Customers
-            ('ROWBACKGROUNDS', (1, 2), (-1, 2), [colors.HexColor('#F0F8F0')]),  # Purchases
-            ('ROWBACKGROUNDS', (1, 3), (-1, 3), [colors.HexColor('#FFF0F0')]),  # Revenue
-            ('ROWBACKGROUNDS', (1, 4), (-1, 4), [colors.HexColor('#F8F0FF')]),  # Cumulative Revenue
-            ('ROWBACKGROUNDS', (1, 5), (-1, 5), [colors.HexColor('#F0F0FF')]),  # Retention Rate
-            ('ROWBACKGROUNDS', (1, 6), (-1, 6), [colors.HexColor('#FFF8F0')]),  # LTV
-        ]))
-        
-        elements.append(product_table)
-        elements.append(Spacer(1, 20))
-        
-        # Add summary for this product
-        # Calculate key insights
-        first_month_revenue = product['Month 1']['Revenue']
-        latest_revenue = 0
-        for month_num in range(12, 0, -1):
-            if product[f'Month {month_num}']['Revenue'] > 0:
-                latest_revenue = product[f'Month {month_num}']['Revenue']
-                break
-        
-        first_month_ltv = product['Month 1']['LTV']
-        latest_ltv = 0
-        for month_num in range(12, 0, -1):
-            if product[f'Month {month_num}']['LTV'] > 0:
-                latest_ltv = product[f'Month {month_num}']['LTV']
-                break
-        
-        growth_multiplier = latest_ltv / first_month_ltv if first_month_ltv > 0 else 0
-        
-        summary_text = f"""
-        <b>Product Performance Summary:</b><br/>
-        • Cohort Size: {cohort_size:,} customers<br/>
-        • First Month LTV: ${first_month_ltv:.2f}<br/>
-        • Latest LTV: ${latest_ltv:.2f}<br/>
-        • LTV Growth Multiplier: {growth_multiplier:.1f}×<br/>
-        • Performance Level: {"Elite" if growth_multiplier >= 7 else "Healthy" if growth_multiplier >= 4 else "Moderate" if growth_multiplier >= 2.5 else "Developing"}
-        """
-        
-        elements.append(Paragraph(summary_text, body_style))
-        elements.append(Spacer(1, 15))
-    
-    elements.append(PageBreak())
-    
-    # Top Products Ranking Context
-    elements.append(Paragraph("Competitive Position Analysis", heading_style))
-    
-    # Calculate top products tables
-    top_products_data = calculate_top_products_tables(product_raw, raw_data)
-    
-    # Find ranking in each category
-    def find_product_rank(products_list, sku):
-        for i, product in enumerate(products_list):
-            if product['Merchant SKU'] == sku:
-                return i + 1, product
-        return None, None
-    
-    # Acquired Customers Ranking
-    acquired_rank, acquired_data = find_product_rank(top_products_data['top_acquired'], selected_product_sku)
-    repeat_rank, repeat_data = find_product_rank(top_products_data['top_repeat'], selected_product_sku)
-    aov_rank, aov_data = find_product_rank(top_products_data['top_aov'], selected_product_sku)
-    ltv_rank, ltv_data = find_product_rank(top_products_data['top_ltv'], selected_product_sku)
-    
-    ranking_text = f"""
-    <b>Product Portfolio Ranking Analysis</b><br/><br/>
-    
-    This analysis shows how {product_title} ranks against all other products in your portfolio across key performance dimensions:<br/><br/>
-    """
-    
-    if acquired_rank:
-        ranking_text += f"<b>Customer Acquisition:</b> Ranked #{acquired_rank} with {acquired_data['Acquired Customers']:,} customers<br/>"
-    if repeat_rank:
-        ranking_text += f"<b>Repeat Purchase Rate:</b> Ranked #{repeat_rank} with {repeat_data['Repeat Rate']}<br/>"
-    if aov_rank:
-        ranking_text += f"<b>Average Order Value:</b> Ranked #{aov_rank} with {aov_data['AOV']}<br/>"
-    if ltv_rank:
-        ranking_text += f"<b>Lifetime Value:</b> Ranked #{ltv_rank} with {ltv_data['LTV']}<br/><br/>"
-    
-    # Performance assessment
-    avg_rank = sum(filter(None, [acquired_rank, repeat_rank, aov_rank, ltv_rank])) / len(list(filter(None, [acquired_rank, repeat_rank, aov_rank, ltv_rank])))
-    
-    if avg_rank <= 3:
-        assessment = "This product is a <b>top performer</b> across multiple dimensions and represents a key growth driver for your business."
-    elif avg_rank <= 5:
-        assessment = "This product shows <b>strong performance</b> with opportunities for optimization in specific areas."
-    else:
-        assessment = "This product has <b>growth potential</b> and would benefit from targeted improvements in customer acquisition and retention."
-    
-    ranking_text += assessment
-    
-    elements.append(Paragraph(ranking_text, body_style))
-    elements.append(Spacer(1, 20))
-    
-    # Top Products Tables Context
-    elements.append(Paragraph("Portfolio Comparison Tables", subheading_style))
-    
-    # Create top 5 tables for context
-    for table_name, table_data, metric_name in [
-        ("Top 5 Products by Acquired Customers", top_products_data['top_acquired'][:5], "Acquired Customers"),
-        ("Top 5 Products by Repeat Rate", top_products_data['top_repeat'][:5], "Repeat Rate"),
-        ("Top 5 Products by AOV", top_products_data['top_aov'][:5], "AOV"),
-        ("Top 5 Products by LTV", top_products_data['top_ltv'][:5], "LTV")
-    ]:
-        elements.append(Paragraph(table_name, subheading_style))
-        
-        table_rows = [['Rank', 'Product Title', metric_name]]
-        for i, product in enumerate(table_data):
-            # Highlight if this is our selected product
-            if product['Merchant SKU'] == selected_product_sku:
-                table_rows.append([f"#{i+1}", f"★ {product['Product Title'][:40]}...", str(product[metric_name])])
-            else:
-                table_rows.append([f"#{i+1}", product['Product Title'][:40] + ("..." if len(product['Product Title']) > 40 else ""), str(product[metric_name])])
-        
-        comparison_table = Table(table_rows, colWidths=[0.8*inch, 3.5*inch, 1.2*inch])
-        comparison_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E67E22')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8F9FA')),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F2F2F2')])
-        ]))
-        
-        # Highlight selected product row
-        for i, product in enumerate(table_data):
-            if product['Merchant SKU'] == selected_product_sku:
-                comparison_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, i+1), (-1, i+1), colors.HexColor('#FFE5B4')),
-                    ('FONTNAME', (0, i+1), (-1, i+1), 'Helvetica-Bold')
+                # Calculate column widths dynamically
+                num_cols = len(cohort_data[0])
+                total_width = 7.5 * inch  # Available width
+                col_width = total_width / num_cols
+                col_widths = [col_width] * num_cols
+                
+                # Adjust first few columns to be slightly wider for text
+                if num_cols > 3:
+                    col_widths[0] = col_width * 1.2  # POME Month
+                    col_widths[1] = col_width * 1.1  # Cohort Size
+                    col_widths[2] = col_width * 1.2  # Metric
+                    # Adjust remaining columns proportionally
+                    remaining_width = total_width - sum(col_widths[:3])
+                    remaining_cols = num_cols - 3
+                    if remaining_cols > 0:
+                        remaining_col_width = remaining_width / remaining_cols
+                        for j in range(3, num_cols):
+                            col_widths[j] = remaining_col_width
+                
+                table = Table(cohort_data, colWidths=col_widths)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F9FA')])
                 ]))
-                break
-        
-        elements.append(comparison_table)
-        elements.append(Spacer(1, 15))
-    
-    elements.append(PageBreak())
-    
-    # Strategic Recommendations
-    elements.append(Paragraph("Strategic Recommendations", heading_style))
-    
-    recommendations_text = f"""
-    <b>Product-Specific Action Plan for {product_title}</b><br/><br/>
-    
-    Based on the comprehensive analysis, here are the key strategic recommendations:<br/><br/>
-    """
-    
-    # Add specific recommendations based on performance
-    if acquired_rank and acquired_rank <= 3:
-        recommendations_text += f"<b>1. Scale Customer Acquisition:</b> This product ranks #{acquired_rank} in customer acquisition. Consider increasing marketing investment and expanding to new customer segments.<br/><br/>"
-    
-    if repeat_rank and repeat_rank <= 5:
-        recommendations_text += f"<b>2. Leverage Retention Strength:</b> With a #{repeat_rank} ranking in repeat rate ({repeat_data['Repeat Rate'] if repeat_data else 'N/A'}), use this product as a gateway to introduce customers to other products in your portfolio.<br/><br/>"
-    
-    if ltv_rank and ltv_rank <= 5:
-        recommendations_text += f"<b>3. Premium Positioning:</b> The #{ltv_rank} LTV ranking ({ltv_data['LTV'] if ltv_data else 'N/A'}) suggests this product can support premium pricing strategies and exclusive marketing campaigns.<br/><br/>"
-    
-    recommendations_text += f"""
-    <b>Key Focus Areas:</b><br/>
-    • Monitor monthly cohort progression to identify optimization opportunities<br/>
-    • Implement targeted retention campaigns for early-stage customers<br/>
-    • Analyze seasonal patterns in the monthly data for inventory planning<br/>
-    • Consider bundling strategies with complementary products<br/>
-    • Track competitive positioning quarterly to maintain market advantage<br/><br/>
-    
-    <b>Success Metrics to Monitor:</b><br/>
-    • Month-over-month LTV growth<br/>
-    • Cohort retention rates<br/>
-    • Average order value trends<br/>
-    • Customer acquisition cost efficiency<br/>
-    • Market share within product category
-    """
-    
-    elements.append(Paragraph(recommendations_text, body_style))
-    elements.append(Spacer(1, 20))
-    
-    # Conclusion
-    elements.append(Paragraph("Conclusion", heading_style))
-    
-    conclusion_text = f"""
-    {product_title} represents {"a key strategic asset" if avg_rank <= 5 else "significant growth potential"} 
-    in your product portfolio. The comprehensive analysis reveals {"strong performance" if avg_rank <= 5 else "opportunities for improvement"} 
-    across multiple dimensions including customer acquisition, retention, and lifetime value.
-    
-    Regular monitoring of the metrics outlined in this report will enable data-driven decisions 
-    to optimize product performance and maximize customer lifetime value. The detailed cohort 
-    analysis provides the foundation for sophisticated retention marketing and inventory planning strategies.
-    
-    This analysis should be updated quarterly to track progress against the recommended action items 
-    and identify emerging trends in customer behavior patterns.
-    """
-    
-    elements.append(Paragraph(conclusion_text, body_style))
+                
+                elements.append(table)
+                elements.append(Spacer(1, 20))
+            
+            # Calculate user breakdown for this specific product using the raw_data_wo_sku equivalent
+            product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
+            
+            if not product_user_breakdown.empty:
+                elements.append(Paragraph("User Breakdown Table", subheading_style))
+                
+                # Convert user breakdown table to list format
+                breakdown_data = [list(product_user_breakdown.columns)]  # Header row
+                for _, row in product_user_breakdown.iterrows():
+                    breakdown_data.append([str(cell) for cell in row])
+                
+                # Calculate column widths for user breakdown
+                num_cols = len(breakdown_data[0])
+                total_width = 7.5 * inch
+                col_width = total_width / num_cols
+                col_widths = [col_width] * num_cols
+                
+                breakdown_table = Table(breakdown_data, colWidths=col_widths)
+                breakdown_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8F9FA')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F2F2F2')])
+                ]))
+                
+                elements.append(breakdown_table)
+                elements.append(Spacer(1, 20))
+                
+        except Exception as e:
+            elements.append(Paragraph(f"Unable to generate tables for {product_title}: {str(e)}", subheading_style))
+            elements.append(Spacer(1, 15))
     
     # Build PDF
     doc.build(elements)
@@ -2366,52 +2106,24 @@ def main():
                             
                             # Comprehensive Report for Top 10 Products
                             st.markdown("---")
-                            st.subheader("📄 Comprehensive Top 10 Products Report")
-                            st.markdown("**Generate a detailed PDF report including User Lifecycle Analysis tables for all top 10 products**")
+                            st.subheader("📄 Top 10 Products Data Report")
+                            st.markdown("**Generate a clean PDF report with cohort analysis and user breakdown tables for all top 10 products**")
                             
-                            # Product selection for comprehensive report
-                            col1, col2 = st.columns([2, 1])
-                            
-                            with col1:
-                                # Get available products from top acquired customers (these have the most data)
-                                available_products = [f"{product['Product Title']} ({product['Merchant SKU']})" 
-                                                    for product in top_products_data['top_acquired']]
-                                
-                                selected_product_display = st.selectbox(
-                                    "Select Product for Comprehensive Analysis:",
-                                    options=available_products,
-                                    help="Choose a product to generate a detailed PDF report with all analysis data"
-                                )
-                                
-                                # Extract SKU from selection
-                                if selected_product_display:
-                                    selected_product_sku = selected_product_display.split('(')[-1].replace(')', '')
-                                    selected_product_title = selected_product_display.split(' (')[0]
-                            
-                            with col2:
-                                st.markdown("**Report Includes:**")
-                                st.markdown("""
-                                • Executive Summary
-                                • Product Performance Analysis  
-                                • **Complete User Lifecycle Analysis for Top 10 Products**
-                                • All 6 Metrics for Each Product (Active Customers, Quantities, Orders, Revenue, Retention Rate, LTV)
-                                • Competitive Position Analysis
-                                • Portfolio Comparison Tables
-                                • Strategic Recommendations
-                                """)
+                            st.markdown("**Report Includes:**")
+                            st.markdown("""
+                            • **Cohort Analysis Table** for each of the top 10 products
+                            • **User Breakdown Table** for each of the top 10 products  
+                            • Raw data tables without analysis or commentary
+                            • Clean, printable format for data review
+                            """)
                             
                             # Generate comprehensive report button
-                            if st.button("🚀 Generate Comprehensive Top 10 Products Report", type="primary"):
-                                with st.spinner(f"Generating comprehensive report for {selected_product_title}..."):
+                            if st.button("🚀 Generate Top 10 Products Data Report", type="primary"):
+                                with st.spinner("Generating data report for top 10 products..."):
                                     try:
-                                        # Calculate cohort analysis for the selected product
-                                        product_cohort_table, _ = calculate_cohort_analysis(raw_data, selected_product_sku)
-                                        product_user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_product_sku)
-                                        
-                                        # Generate the comprehensive PDF report
+                                        # Generate the PDF report (no need for specific product selection)
                                         pdf_path = generate_comprehensive_product_report(
-                                            product_raw, raw_data, product_cohort_table, 
-                                            product_user_breakdown, selected_product_sku, selected_product_title
+                                            product_raw, raw_data, None, None, None, None
                                         )
                                         
                                         # Read the PDF file
@@ -2419,11 +2131,11 @@ def main():
                                             pdf_bytes = pdf_file.read()
                                         
                                         # Provide download button
-                                        st.success("✅ Comprehensive product report generated successfully!")
+                                        st.success("✅ Top 10 products data report generated successfully!")
                                         st.download_button(
-                                            label="📥 Download Top 10 Products Comprehensive Report",
+                                            label="📥 Download Top 10 Products Data Report",
                                             data=pdf_bytes,
-                                            file_name=f"Top_10_Products_Comprehensive_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                            file_name=f"Top_10_Products_Data_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                                             mime="application/pdf"
                                         )
                                         
@@ -2431,11 +2143,11 @@ def main():
                                         os.unlink(pdf_path)
                                         
                                         # Show what was included
-                                        st.info(f"""
-                                        **Report Generated for:** Top 10 Products Analysis  
-                                        **Featured Product:** {selected_product_title} ({selected_product_sku})  
-                                        **Sections Included:** Executive Summary, Performance Analysis, **Complete User Lifecycle Analysis for Top 10 Products**, Competitive Position, Portfolio Comparison, Strategic Recommendations  
-                                        **Data Sources:** ProductRaw, RawData, Individual Cohort Analysis for each Top 10 Product, Top Products Rankings
+                                        st.info("""
+                                        **Report Generated:** Top 10 Products Data Report  
+                                        **Products Included:** Top 10 products by acquired customers  
+                                        **Tables Included:** Cohort Analysis and User Breakdown tables for each product  
+                                        **Format:** Raw data tables without analysis or commentary
                                         """)
                                         
                                     except Exception as e:
