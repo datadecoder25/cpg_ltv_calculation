@@ -15,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 import tempfile
 import os
+from openai import OpenAI
 
 # Set page config
 st.set_page_config(
@@ -22,6 +23,30 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# Initialize OpenAI client (will be initialized when API key is provided)
+API_KEY = '<YOUR API KEY>'
+client = OpenAI(api_key = API_KEY)
+
+def call_chat(system_prompt, prompt, model):
+    """Call OpenAI Chat API with system and user prompts"""
+    global client
+    if not client:
+        st.error("OpenAI client not initialized. Please provide an API key.")
+        return None, 0, 0
+    
+    try:
+        res = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        return res.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error calling OpenAI API: {str(e)}")
+        return None
 
 def process_files(uploaded_files):
     """Process uploaded CSV files and combine them into a single dataframe"""
@@ -975,6 +1000,90 @@ def calculate_top_products_tables(product_raw, raw_data):
         'top_ltv': top_ltv
     }
 
+def generate_product_ltv_analysis(product_sku, product_title, cohort_data, user_breakdown_data, model="gpt-4o-mini"):
+    """Generate LLM analysis for a specific product's LTV data"""
+    
+    # System prompt with the theory and instructions
+    system_prompt = """You are an expert e-commerce analyst specializing in customer lifetime value (LTV) analysis. 
+
+Your task is to analyze product-level LTV data and provide insights following this framework:
+
+THEORY:
+The LTV is a metric used to value customers that a business acquires. It is a fundamental KPI used to analyze the health of our business's marketing efforts. In online retail, operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
+
+At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be compared (apples to apples) to other businesses or customer acquisition channels.
+
+CRITICAL INSIGHT: This is not a dashboarding exercise. The objective is to leverage the insights to support business growth.
+
+WHY PRODUCT-LEVEL ANALYSIS MATTERS:
+- If the LTV is 2x compared to a first-time purchase, or if the LTV is not impressive at the account level, then examine the product level to determine what can be done
+- Even when the account level LTV is impressive, analyze what products are driving it (weight the LTV based on sales as it may be misleading otherwise)
+- Diving deep into product-level LTV allows you to understand which product is driving more retention and higher LTV, and allocate your ad spending on them
+- You can identify hero products with poor LTV before pushing them with ads
+
+BENCHMARKS:
+- Snacks/pantry: ~2.5–4× is healthy; 4–5× best-in-class
+- Supplements: ~4–7× is healthy; 7–9× elite
+
+FORMATTING REQUIREMENTS:
+Your response MUST be well-structured with simple, clean formatting for PDF generation:
+- Use **bold text** for main headings (markdown style)
+- Use simple bullet points with - for lists
+- Use plain text only - NO HTML tags, NO special characters, NO emojis
+- Use line breaks between sections
+- Keep paragraphs concise and scannable
+- Use CAPS for emphasis instead of special formatting
+
+Your response should be professional, actionable, and focused on business growth insights with clear, simple structure."""
+
+    # Create user prompt with the actual data
+    user_prompt = f"""Analyze the LTV performance for this product:
+
+PRODUCT: {product_title}
+SKU: {product_sku}
+
+COHORT ANALYSIS DATA:
+{cohort_data.to_string()}
+
+USER BREAKDOWN DATA:
+{user_breakdown_data.to_string()}
+
+Please provide a well-structured analysis with the following sections (use simple, clean formatting):
+
+**LTV PERFORMANCE SUMMARY**
+- Overall LTV metrics and trends
+- Key performance indicators
+- Monthly progression analysis
+
+**CUSTOMER BEHAVIOR INSIGHTS**
+- Retention patterns and trends
+- Purchase frequency analysis
+- Customer lifecycle observations
+
+**GROWTH RECOMMENDATIONS**
+- Specific actionable strategies
+- Priority initiatives for improvement
+- Resource allocation suggestions
+
+**INDUSTRY BENCHMARK COMPARISON**
+- Performance vs industry standards
+- Competitive positioning assessment
+- Areas of strength and weakness
+
+**STRATEGIC AD SPENDING IMPLICATIONS**
+- Investment recommendations
+- Channel optimization opportunities
+- Risk factors and considerations
+
+Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations."""
+
+    # Call the LLM
+    analysis = call_chat(system_prompt, user_prompt, model)
+    
+    return {
+        'analysis': analysis
+    }
+
 def calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_merchant_sku=None):
     """
     Calculate old users vs new users breakdown based on merchant SKU selection
@@ -1093,7 +1202,79 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     
     return fig
 
-def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, user_breakdown_df, selected_product_sku, product_title):
+def clean_text_for_pdf(text):
+    """Clean text to make it safe for PDF generation with ReportLab"""
+    if not text:
+        return ""
+    
+    import re
+    
+    # Convert markdown-style bold to HTML bold
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    
+    # Replace bullet points with simple dashes
+    text = text.replace('•', '-').replace('◦', '-').replace('—', '-')
+    
+    # Remove emojis and special unicode characters that might cause issues
+    text = re.sub(r'[^\x00-\x7F]+', '', text)
+    
+    # Clean up any remaining problematic characters
+    text = text.replace('\\', '')
+    text = text.replace('"', "'")
+    
+    # Ensure proper line breaks
+    text = text.replace('\n\n', '<br/><br/>').replace('\n', '<br/>')
+    
+    # Remove any nested paragraph tags that might cause issues
+    text = re.sub(r'<para.*?>', '', text)
+    text = text.replace('</para>', '')
+    
+    return text
+
+def generate_product_data_files(product_raw, raw_data):
+    """Generate individual data files for each of the top 10 products"""
+    
+    # Get top 10 products
+    top_products_data = calculate_top_products_tables(product_raw, raw_data)
+    top_10_products = top_products_data['top_acquired'][:10]
+    
+    # Create a ZIP file with all product data
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for product in top_10_products:
+            product_sku = product['Merchant SKU']
+            product_title = product['Product Title']
+            
+            # Clean SKU for filename
+            safe_sku = "".join(c for c in product_sku if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            
+            try:
+                # Generate cohort analysis for this product
+                product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+                if not product_cohort_table.empty:
+                    zip_file.writestr(f"{safe_sku}_Cohort_Analysis.csv", product_cohort_table.to_csv(index=False))
+                
+                # Generate user breakdown for this product
+                product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
+                if not product_user_breakdown.empty:
+                    zip_file.writestr(f"{safe_sku}_User_Breakdown.csv", product_user_breakdown.to_csv(index=False))
+                
+                # Generate product LTV data for this product
+                product_ltv_data = create_product_ltv_table(product_raw[product_raw['merchant_sku'] == product_sku], raw_data)
+                if product_ltv_data:
+                    product_ltv_export = export_product_ltv_table(product_ltv_data)
+                    zip_file.writestr(f"{safe_sku}_Product_LTV.csv", product_ltv_export.to_csv(index=False))
+                    
+            except Exception as e:
+                # Create error file if data generation fails
+                error_content = f"Error generating data for {product_title} (SKU: {product_sku}): {str(e)}"
+                zip_file.writestr(f"{safe_sku}_ERROR.txt", error_content)
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
+
+def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, user_breakdown_df, selected_product_sku, product_title, model="gpt-4o-mini"):
     """Generate a clean PDF report showing cohort_table and user_breakdown_df for top 10 products"""
     
     # Create a temporary file
@@ -1132,6 +1313,18 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
         textColor=colors.HexColor('#2c3e50')
     )
     
+    analysis_style = ParagraphStyle(
+        'AnalysisStyle',
+        parent=styles['Normal'],
+        fontSize=10,
+        spaceAfter=12,
+        spaceBefore=10,
+        alignment=TA_JUSTIFY,
+        textColor=colors.HexColor('#2c3e50'),
+        leftIndent=20,
+        rightIndent=20
+    )
+    
     # Title Page
     elements.append(Paragraph("Top 10 Products - Data Report", title_style))
     elements.append(Spacer(1, 30))
@@ -1140,7 +1333,7 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     top_products_data = calculate_top_products_tables(product_raw, raw_data)
     top_10_products = top_products_data['top_acquired'][:10]
     
-    # For each of the top 10 products, show their cohort table and user breakdown
+    # For each of the top 10 products, generate AI analysis and reference data files
     for i, product in enumerate(top_10_products, 1):
         product_sku = product['Merchant SKU']
         product_title = product['Product Title']
@@ -1150,90 +1343,52 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
         elements.append(Paragraph(f"SKU: {product_sku}", subheading_style))
         elements.append(Spacer(1, 15))
         
-        # Calculate cohort analysis for this specific product
+        # Add data file references
+        elements.append(Paragraph("📊 Data Files Available for Download", subheading_style))
+        file_reference_style = ParagraphStyle(
+            'FileReference',
+            parent=styles['Normal'],
+            fontSize=9,
+            spaceAfter=8,
+            leftIndent=15,
+            textColor=colors.HexColor('#666666')
+        )
+        
+        # Clean SKU for filename (remove special characters)
+        safe_sku = "".join(c for c in product_sku if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        
+        elements.append(Paragraph(f"• <b>Cohort Analysis:</b> {safe_sku}_Cohort_Analysis.csv", file_reference_style))
+        elements.append(Paragraph(f"• <b>User Breakdown:</b> {safe_sku}_User_Breakdown.csv", file_reference_style))
+        elements.append(Paragraph(f"• <b>Product LTV Data:</b> {safe_sku}_Product_LTV.csv", file_reference_style))
+        elements.append(Spacer(1, 20))
+            
+        # Calculate data for AI analysis (but don't display tables)
         try:
             product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
-            
-            if not product_cohort_table.empty:
-                elements.append(Paragraph("Cohort Analysis Table", subheading_style))
-                
-                # Convert cohort table to list format for ReportLab Table
-                cohort_data = [list(product_cohort_table.columns)]  # Header row
-                for _, row in product_cohort_table.iterrows():
-                    cohort_data.append([str(cell) for cell in row])
-                
-                # Calculate column widths dynamically
-                num_cols = len(cohort_data[0])
-                total_width = 7.5 * inch  # Available width
-                col_width = total_width / num_cols
-                col_widths = [col_width] * num_cols
-                
-                # Adjust first few columns to be slightly wider for text
-                if num_cols > 3:
-                    col_widths[0] = col_width * 1.2  # POME Month
-                    col_widths[1] = col_width * 1.1  # Cohort Size
-                    col_widths[2] = col_width * 1.2  # Metric
-                    # Adjust remaining columns proportionally
-                    remaining_width = total_width - sum(col_widths[:3])
-                    remaining_cols = num_cols - 3
-                    if remaining_cols > 0:
-                        remaining_col_width = remaining_width / remaining_cols
-                        for j in range(3, num_cols):
-                            col_widths[j] = remaining_col_width
-                
-                table = Table(cohort_data, colWidths=col_widths)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F2F2F2')),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F9FA')])
-                ]))
-                
-                elements.append(table)
-                elements.append(Spacer(1, 20))
-            
-            # Calculate user breakdown for this specific product using the raw_data_wo_sku equivalent
             product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
             
-            if not product_user_breakdown.empty:
-                elements.append(Paragraph("User Breakdown Table", subheading_style))
-                
-                # Convert user breakdown table to list format
-                breakdown_data = [list(product_user_breakdown.columns)]  # Header row
-                for _, row in product_user_breakdown.iterrows():
-                    breakdown_data.append([str(cell) for cell in row])
-                
-                # Calculate column widths for user breakdown
-                num_cols = len(breakdown_data[0])
-                total_width = 7.5 * inch
-                col_width = total_width / num_cols
-                col_widths = [col_width] * num_cols
-                
-                breakdown_table = Table(breakdown_data, colWidths=col_widths)
-                breakdown_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27AE60')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8F9FA')),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F2F2F2')])
-                ]))
-                
-                elements.append(breakdown_table)
+            # Generate LLM analysis for this product
+            if client:  # Only generate if OpenAI client is available
+                try:
+                    llm_result = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
+                    if llm_result['analysis']:
+                        elements.append(Paragraph("🤖 AI-Powered LTV Analysis & Strategic Insights", subheading_style))
+                        
+                        # Clean the analysis text for PDF generation
+                        analysis_text = clean_text_for_pdf(llm_result['analysis'])
+                        
+                        elements.append(Paragraph(analysis_text, analysis_style))
+                        elements.append(Spacer(1, 20))
+                except Exception as llm_error:
+                    elements.append(Paragraph(f"LLM Analysis unavailable: {str(llm_error)}", analysis_style))
+                    elements.append(Spacer(1, 15))
+            else:
+                elements.append(Paragraph("🤖 AI Analysis", subheading_style))
+                elements.append(Paragraph("AI-powered analysis is available when an OpenAI API key is provided. The analysis would include strategic insights, performance benchmarks, and specific recommendations for this product based on its LTV data.", analysis_style))
                 elements.append(Spacer(1, 20))
                 
         except Exception as e:
-            elements.append(Paragraph(f"Unable to generate tables for {product_title}: {str(e)}", subheading_style))
+            elements.append(Paragraph(f"Unable to generate analysis for {product_title}: {str(e)}", subheading_style))
             elements.append(Spacer(1, 15))
     
     # Build PDF
@@ -1358,12 +1513,7 @@ def generate_pdf_report(cohort_table, selected_sku, raw_data, user_breakdown_df)
                 performance = "Needs Improvement"
                 assessment = "LTV performance requires immediate attention to ensure sustainable growth."
             
-            summary_text = f"""
-            This analysis covers {len(ltv_data)} customer cohorts representing {total_customers:,} total customers. 
-            The average first-month LTV is ${avg_first_ltv:.2f}, growing to ${avg_latest_ltv:.2f} over the tracking period, 
-            representing a {ltv_multiplier:.1f}× multiplier. This performance is classified as "{performance}". 
-            {assessment}
-            """
+            summary_text = f"This analysis covers {len(ltv_data)} customer cohorts representing {total_customers:,} total customers. The average first-month LTV is ${avg_first_ltv:.2f}, growing to ${avg_latest_ltv:.2f} over the tracking period, representing a {ltv_multiplier:.1f}x multiplier. This performance is classified as {performance}. {assessment}"
             
             elements.append(Paragraph(summary_text, body_style))
             elements.append(Spacer(1, 20))
@@ -1632,7 +1782,7 @@ def main():
             st.success("All calculations completed!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis", "📊 Product LTV Analysis", "📄 PDF Report"])
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["ProductRaw", "ProductSummary", "RawData", "User Lifecycle Analysis", "Retention & LTV Analysis", "User Breakdown Analysis", "📊 Product LTV Analysis", "📄 Top 10 Products Report"])
             
             with tab1:
                 st.subheader("ProductRaw Data")
@@ -2062,6 +2212,11 @@ def main():
                             with col1:
                                 st.markdown("##### 🎯 Top 10 Products by Acquired Customers")
                                 acquired_df = pd.DataFrame(top_products_data['top_acquired'])
+                                # Clean numeric data to avoid PyArrow conversion errors
+                                for col in acquired_df.columns:
+                                    if col not in ['Product Title', 'Merchant SKU']:
+                                        if acquired_df[col].dtype == 'object':
+                                            acquired_df[col] = pd.to_numeric(acquired_df[col], errors='coerce').fillna(0)
                                 # Add ranking
                                 acquired_df.insert(0, 'Rank', range(1, len(acquired_df) + 1))
                                 st.dataframe(acquired_df, use_container_width=True, height=350)
@@ -2069,6 +2224,16 @@ def main():
                             with col2:
                                 st.markdown("##### 🔄 Top 10 Products by Repeat Rate")
                                 repeat_df = pd.DataFrame(top_products_data['top_repeat'])
+                                # Clean numeric data to avoid PyArrow conversion errors
+                                for col in repeat_df.columns:
+                                    if col not in ['Product Title', 'Merchant SKU']:
+                                        if repeat_df[col].dtype == 'object':
+                                            # Special handling for percentage strings
+                                            if 'Rate' in col or '%' in str(repeat_df[col].iloc[0]):
+                                                repeat_df[col] = repeat_df[col].astype(str).str.replace('%', '').replace('', '0')
+                                                repeat_df[col] = pd.to_numeric(repeat_df[col], errors='coerce').fillna(0)
+                                            else:
+                                                repeat_df[col] = pd.to_numeric(repeat_df[col], errors='coerce').fillna(0)
                                 # Add ranking
                                 repeat_df.insert(0, 'Rank', range(1, len(repeat_df) + 1))
                                 st.dataframe(repeat_df, use_container_width=True, height=350)
@@ -2078,6 +2243,16 @@ def main():
                             with col3:
                                 st.markdown("##### 💰 Top 10 Products by AOV")
                                 aov_df = pd.DataFrame(top_products_data['top_aov'])
+                                # Clean numeric data to avoid PyArrow conversion errors
+                                for col in aov_df.columns:
+                                    if col not in ['Product Title', 'Merchant SKU']:
+                                        if aov_df[col].dtype == 'object':
+                                            # Special handling for currency strings
+                                            if 'AOV' in col or '$' in str(aov_df[col].iloc[0]):
+                                                aov_df[col] = aov_df[col].astype(str).str.replace('$', '').replace('', '0')
+                                                aov_df[col] = pd.to_numeric(aov_df[col], errors='coerce').fillna(0)
+                                            else:
+                                                aov_df[col] = pd.to_numeric(aov_df[col], errors='coerce').fillna(0)
                                 # Add ranking
                                 aov_df.insert(0, 'Rank', range(1, len(aov_df) + 1))
                                 st.dataframe(aov_df, use_container_width=True, height=350)
@@ -2085,6 +2260,16 @@ def main():
                             with col4:
                                 st.markdown("##### 📈 Top 10 Products by LTV")
                                 ltv_df = pd.DataFrame(top_products_data['top_ltv'])
+                                # Clean numeric data to avoid PyArrow conversion errors
+                                for col in ltv_df.columns:
+                                    if col not in ['Product Title', 'Merchant SKU']:
+                                        if ltv_df[col].dtype == 'object':
+                                            # Special handling for currency strings
+                                            if 'LTV' in col or '$' in str(ltv_df[col].iloc[0]):
+                                                ltv_df[col] = ltv_df[col].astype(str).str.replace('$', '').replace('', '0')
+                                                ltv_df[col] = pd.to_numeric(ltv_df[col], errors='coerce').fillna(0)
+                                            else:
+                                                ltv_df[col] = pd.to_numeric(ltv_df[col], errors='coerce').fillna(0)
                                 # Add ranking
                                 ltv_df.insert(0, 'Rank', range(1, len(ltv_df) + 1))
                                 st.dataframe(ltv_df, use_container_width=True, height=350)
@@ -2104,56 +2289,7 @@ def main():
                             with col4:
                                 st.markdown(create_download_link(ltv_df, "Top_Products_LTV.csv", "📥 LTV"), unsafe_allow_html=True)
                             
-                            # Comprehensive Report for Top 10 Products
-                            st.markdown("---")
-                            st.subheader("📄 Top 10 Products Data Report")
-                            st.markdown("**Generate a clean PDF report with cohort analysis and user breakdown tables for all top 10 products**")
-                            
-                            st.markdown("**Report Includes:**")
-                            st.markdown("""
-                            • **Cohort Analysis Table** for each of the top 10 products
-                            • **User Breakdown Table** for each of the top 10 products  
-                            • Raw data tables without analysis or commentary
-                            • Clean, printable format for data review
-                            """)
-                            
-                            # Generate comprehensive report button
-                            if st.button("🚀 Generate Top 10 Products Data Report", type="primary"):
-                                with st.spinner("Generating data report for top 10 products..."):
-                                    try:
-                                        # Generate the PDF report (no need for specific product selection)
-                                        pdf_path = generate_comprehensive_product_report(
-                                            product_raw, raw_data, None, None, None, None
-                                        )
-                                        
-                                        # Read the PDF file
-                                        with open(pdf_path, "rb") as pdf_file:
-                                            pdf_bytes = pdf_file.read()
-                                        
-                                        # Provide download button
-                                        st.success("✅ Top 10 products data report generated successfully!")
-                                        st.download_button(
-                                            label="📥 Download Top 10 Products Data Report",
-                                            data=pdf_bytes,
-                                            file_name=f"Top_10_Products_Data_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                            mime="application/pdf"
-                                        )
-                                        
-                                        # Clean up temporary file
-                                        os.unlink(pdf_path)
-                                        
-                                        # Show what was included
-                                        st.info("""
-                                        **Report Generated:** Top 10 Products Data Report  
-                                        **Products Included:** Top 10 products by acquired customers  
-                                        **Tables Included:** Cohort Analysis and User Breakdown tables for each product  
-                                        **Format:** Raw data tables without analysis or commentary
-                                        """)
-                                        
-                                    except Exception as e:
-                                        st.error(f"❌ Error generating comprehensive report: {str(e)}")
-                                        st.info("Please ensure all data has been calculated successfully and try again.")
-                            
+
                         else:
                             st.error("❌ Failed to generate Product LTV Analysis. Please ensure ProductRaw data is available.")
                             
@@ -2162,166 +2298,133 @@ def main():
                         st.error("Please ensure ProductRaw and RawData have been calculated successfully.")
             
             with tab8:
-                st.header("📄 Comprehensive LTV Analysis Report")
-                st.markdown("""
-                Generate a professional PDF report that includes:
-                - **Executive Summary** with key performance metrics
-                - **LTV Theory & Methodology** explained with real-world examples
-                - **Strategic Use Cases** and business applications
-                - **Data Interpretation Guide** with specific examples from your data
-                - **Industry Benchmarks** and performance assessment
-                - **Strategic Recommendations** based on your LTV performance
-                """)
+                st.header("📄 Top 10 Products Data Report")
+                st.markdown("**Generate a comprehensive PDF report with cohort analysis, user breakdown tables, and AI-powered LTV insights for all top 10 products**")
                 
-                # SKU selection for report
-                st.subheader("📊 Report Configuration")
-                available_skus_report = ["All"] + sorted(raw_data['merchant_sku'].unique().tolist())
-                selected_sku_report = st.selectbox(
-                    "Select Merchant SKU for Report:",
-                    available_skus_report,
-                    help="Choose a specific SKU or 'All' to include in the comprehensive report",
-                    key="report_sku_selector"
-                )
+                # OpenAI Configuration Section
+                st.subheader("🤖 AI-Powered Analysis Configuration")
                 
-                # Calculate cohort analysis for the report
-                with st.spinner(f"Preparing report data for {selected_sku_report}..."):
-                    cohort_table_report, filter_msg_report = calculate_cohort_analysis(raw_data, selected_sku_report)
-                    user_breakdown_report = calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_sku_report)
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    openai_api_key = st.text_input(
+                        "OpenAI API Key",
+                        type="password",
+                        help="Enter your OpenAI API key to enable AI-powered LTV analysis for each product",
+                        placeholder="sk-..."
+                    )
+                with col2:
+                    model_choice = st.selectbox(
+                        "Model",
+                        ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+                        help="Choose the OpenAI model for analysis"
+                    )
                 
-                st.info(filter_msg_report)
-                
-                # Report preview
-                st.subheader("📋 Report Preview")
-                
-                # Show key metrics that will be in the report
-                ltv_data_preview = cohort_table_report[cohort_table_report['Metric'] == 'LTV'].copy()
-                if not ltv_data_preview.empty:
-                    month_columns_preview = [col for col in ltv_data_preview.columns if col not in ['POME Month', 'Cohort Size', 'Metric', 'Total']]
-                    month_columns_preview = sorted(month_columns_preview)
-                    
-                    # Calculate preview metrics
-                    first_month_ltv_values_preview = []
-                    latest_ltv_values_preview = []
-                    total_customers_preview = 0
-                    
-                    for _, row in ltv_data_preview.iterrows():
-                        pome_month = row['POME Month']
-                        cohort_size = row['Cohort Size']
-                        total_customers_preview += cohort_size
-                        
-                        if pome_month in month_columns_preview:
-                            first_ltv_str = row[pome_month]
-                            if isinstance(first_ltv_str, str) and first_ltv_str.startswith('$'):
-                                first_ltv = float(first_ltv_str.replace('$', '').replace(',', ''))
-                                if first_ltv > 0:
-                                    first_month_ltv_values_preview.append(first_ltv)
-                                    
-                                    # Get latest month LTV
-                                    latest_ltv = 0
-                                    for month_col in reversed(month_columns_preview):
-                                        if month_col >= pome_month:
-                                            ltv_str = row[month_col]
-                                            if isinstance(ltv_str, str) and ltv_str.startswith('$'):
-                                                ltv_val = float(ltv_str.replace('$', '').replace(',', ''))
-                                                if ltv_val > 0:
-                                                    latest_ltv = ltv_val
-                                                    break
-                                    latest_ltv_values_preview.append(latest_ltv)
-                    
-                    if first_month_ltv_values_preview and latest_ltv_values_preview:
-                        avg_first_ltv_preview = sum(first_month_ltv_values_preview) / len(first_month_ltv_values_preview)
-                        avg_latest_ltv_preview = sum(latest_ltv_values_preview) / len(latest_ltv_values_preview)
-                        ltv_multiplier_preview = avg_latest_ltv_preview / avg_first_ltv_preview if avg_first_ltv_preview > 0 else 0
-                        
-                        # Display preview metrics
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Cohorts Analyzed", len(ltv_data_preview))
-                        with col2:
-                            st.metric("Total Customers", f"{total_customers_preview:,}")
-                        with col3:
-                            st.metric("Avg First Month LTV", f"${avg_first_ltv_preview:.2f}")
-                        with col4:
-                            st.metric("LTV Multiplier", f"{ltv_multiplier_preview:.1f}×")
-                        
-                        # Performance indicator
-                        if ltv_multiplier_preview >= 7:
-                            st.success("🏆 **Elite Performance** - Your report will highlight exceptional LTV metrics!")
-                        elif ltv_multiplier_preview >= 4:
-                            st.success("✅ **Healthy Performance** - Strong metrics to showcase in your report!")
-                        elif ltv_multiplier_preview >= 2.5:
-                            st.warning("⚠️ **Moderate Performance** - Report will include improvement recommendations!")
-                        else:
-                            st.error("❌ **Needs Improvement** - Report will focus on actionable insights for growth!")
+                # Initialize OpenAI client if API key is provided
+                global client
+                if openai_api_key:
+                    try:
+                        client = OpenAI(api_key=openai_api_key)
+                        st.success("✅ AI analysis enabled! Your report will include expert LTV insights for each product.")
+                    except Exception as e:
+                        st.error(f"❌ Error initializing OpenAI client: {str(e)}")
+                        client = None
+                else:
+                    client = None
+                    st.info("💡 **Optional**: Provide an OpenAI API key to get AI-powered LTV analysis and business insights for each product in your report.")
                 
                 st.markdown("---")
                 
-                # Generate PDF button
-                st.subheader("📄 Generate PDF Report")
+                st.markdown("**Enhanced Report Includes:**")
+                st.markdown("""
+                • **🤖 AI-Powered LTV Analysis** - Expert insights and recommendations for each of the top 10 products (when API key provided)
+                • **📊 Data File References** - Clear references to downloadable data files for each product
+                • Business growth recommendations and strategic insights
+                • Industry benchmark comparisons  
+                • Clean, professional format optimized for executive presentations
+                • Separate downloadable data files for detailed analysis
+                """)
                 
-                if st.button("🚀 Generate Comprehensive PDF Report", type="primary"):
-                    with st.spinner("Generating comprehensive PDF report... This may take a moment."):
+                # Generate comprehensive report button
+                if st.button("🚀 Generate Top 10 Products Data Report", type="primary"):
+                    with st.spinner("Generating data report for top 10 products..."):
                         try:
-                            # Generate the PDF report
-                            pdf_path = generate_pdf_report(cohort_table_report, selected_sku_report, raw_data, user_breakdown_report)
+                            # Generate the PDF report (no need for specific product selection)
+                            pdf_path = generate_comprehensive_product_report(
+                                product_raw, raw_data, None, None, None, None, model_choice
+                            )
                             
                             # Read the PDF file
                             with open(pdf_path, "rb") as pdf_file:
                                 pdf_bytes = pdf_file.read()
                             
                             # Provide download button
-                            st.success("✅ Report generated successfully!")
+                            ai_status = "with AI-powered insights" if client else "with data tables only"
+                            st.success(f"✅ Top 10 products data report generated successfully {ai_status}!")
                             st.download_button(
-                                label="📥 Download PDF Report",
+                                label="📥 Download Top 10 Products Data Report",
                                 data=pdf_bytes,
-                                file_name=f"LTV_Analysis_Report_{selected_sku_report}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                file_name=f"Top_10_Products_Data_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                                 mime="application/pdf"
                             )
                             
                             # Clean up temporary file
                             os.unlink(pdf_path)
                             
-                            st.info("💡 **Tip**: This report is perfect for sharing with stakeholders, investors, or your marketing team to demonstrate the strategic value of your customer acquisition efforts.")
+                            # Show what was included
+                            ai_info = "**🤖 AI Analysis:** Expert LTV insights and recommendations for each product" if client else "**📊 Analysis:** Placeholder sections for AI insights (API key required)"
+                            st.info(f"""
+                            **Report Generated:** Top 10 Products Analysis Report  
+                            **Products Included:** Top 10 products by acquired customers  
+                            **Content:** AI-powered strategic insights with data file references  
+                            {ai_info}  
+                            **Model Used:** {model_choice if client else "N/A"}  
+                            **Data Files:** Available for download separately below
+                            """)
                             
                         except Exception as e:
-                            st.error(f"❌ Error generating PDF report: {str(e)}")
+                            st.error(f"❌ Error generating comprehensive report: {str(e)}")
                             st.info("Please ensure all data has been calculated successfully and try again.")
+                            
+                # Add download section for individual product data files
+                st.markdown("---")
+                st.subheader("📊 Download Individual Product Data Files")
+                st.markdown("**Get detailed data files for each of the top 10 products (referenced in the PDF report)**")
                 
-                # Report contents description
-                st.markdown("### 📋 What's Included in Your Report")
-                st.markdown("""
-                **1. Executive Summary**
-                - Key performance metrics and LTV multiplier analysis
-                - Performance classification (Elite, Healthy, Moderate, Needs Improvement)
-                - Strategic assessment of your business health
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.info("""
+                    **Data Files Include:**
+                    • **Cohort Analysis** - Monthly user behavior and LTV progression for each product
+                    • **User Breakdown** - New vs returning customer analysis for each product  
+                    • **Product LTV Data** - Detailed LTV metrics and calculations for each product
+                    
+                    These are the same data files referenced in your PDF report for detailed analysis.
+                    """)
                 
-                **2. LTV Theory & Methodology**
-                - Comprehensive explanation of why LTV matters
-                - Common calculation traps and how to avoid them
-                - Real-world case study examples
-                
-                **3. Strategic Business Applications**
-                - Marketing ROI optimization strategies
-                - Quality control and product improvement insights
-                - Advanced targeting opportunities
-                - Investment decision frameworks
-                
-                **4. Data Interpretation Guide**
-                - Step-by-step explanation using your actual data
-                - How to read cohort progression over time
-                - Key insights and patterns to look for
-                
-                **5. Industry Benchmarks**
-                - Performance standards for snacks/pantry (2.5-4× healthy, 4-5× best-in-class)
-                - Performance standards for supplements (4-7× healthy, 7-9× elite)
-                - Competitive positioning analysis
-                
-                **6. Strategic Recommendations**
-                - Customized action items based on your performance level
-                - Specific next steps for business growth
-                - Risk mitigation strategies
-                - Scaling opportunities
-                """)
+                with col2:
+                    if st.button("📥 Download Product Data Files", type="secondary"):
+                        try:
+                            with st.spinner("Generating data files for top 10 products..."):
+                                # Generate the data files
+                                zip_data = generate_product_data_files(product_raw, raw_data)
+                                
+                                # Provide download button
+                                st.success("✅ Product data files generated successfully!")
+                                st.download_button(
+                                    label="📥 Download ZIP File",
+                                    data=zip_data,
+                                    file_name=f"Top_10_Products_Data_Files_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                    mime="application/zip"
+                                )
+                                
+                                st.info("""
+                                **Generated Files:** Individual CSV files for each of the top 10 products  
+                                **File Naming:** `[SKU]_[DataType].csv` (e.g., `ABC123_Cohort_Analysis.csv`)  
+                                **Contents:** Detailed data tables referenced in your PDF report
+                                """)
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error generating data files: {str(e)}")
             
             # Download all results as ZIP
             st.header("📦 Download All Results")
@@ -2384,20 +2487,38 @@ def main():
                     try:
                         top_products_data = calculate_top_products_tables(product_raw, raw_data)
                         
-                        # Add each top products table
+                        # Add each top products table with data cleaning
                         acquired_df = pd.DataFrame(top_products_data['top_acquired'])
+                        for col in acquired_df.columns:
+                            if col not in ['Product Title', 'Merchant SKU'] and acquired_df[col].dtype == 'object':
+                                acquired_df[col] = pd.to_numeric(acquired_df[col], errors='coerce').fillna(0)
                         acquired_df.insert(0, 'Rank', range(1, len(acquired_df) + 1))
                         zip_file.writestr("Top_Products_Acquired_Customers.csv", acquired_df.to_csv(index=False))
                         
                         repeat_df = pd.DataFrame(top_products_data['top_repeat'])
+                        for col in repeat_df.columns:
+                            if col not in ['Product Title', 'Merchant SKU'] and repeat_df[col].dtype == 'object':
+                                if 'Rate' in col or '%' in str(repeat_df[col].iloc[0]):
+                                    repeat_df[col] = repeat_df[col].astype(str).str.replace('%', '').replace('', '0')
+                                repeat_df[col] = pd.to_numeric(repeat_df[col], errors='coerce').fillna(0)
                         repeat_df.insert(0, 'Rank', range(1, len(repeat_df) + 1))
                         zip_file.writestr("Top_Products_Repeat_Rate.csv", repeat_df.to_csv(index=False))
                         
                         aov_df = pd.DataFrame(top_products_data['top_aov'])
+                        for col in aov_df.columns:
+                            if col not in ['Product Title', 'Merchant SKU'] and aov_df[col].dtype == 'object':
+                                if 'AOV' in col or '$' in str(aov_df[col].iloc[0]):
+                                    aov_df[col] = aov_df[col].astype(str).str.replace('$', '').replace('', '0')
+                                aov_df[col] = pd.to_numeric(aov_df[col], errors='coerce').fillna(0)
                         aov_df.insert(0, 'Rank', range(1, len(aov_df) + 1))
                         zip_file.writestr("Top_Products_AOV.csv", aov_df.to_csv(index=False))
                         
                         ltv_df = pd.DataFrame(top_products_data['top_ltv'])
+                        for col in ltv_df.columns:
+                            if col not in ['Product Title', 'Merchant SKU'] and ltv_df[col].dtype == 'object':
+                                if 'LTV' in col or '$' in str(ltv_df[col].iloc[0]):
+                                    ltv_df[col] = ltv_df[col].astype(str).str.replace('$', '').replace('', '0')
+                                ltv_df[col] = pd.to_numeric(ltv_df[col], errors='coerce').fillna(0)
                         ltv_df.insert(0, 'Rank', range(1, len(ltv_df) + 1))
                         zip_file.writestr("Top_Products_LTV.csv", ltv_df.to_csv(index=False))
                     except:
