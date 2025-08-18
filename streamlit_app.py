@@ -1115,44 +1115,9 @@ What you have
 •	The Metric column includes exactly these rows (case-insensitive match): Active Customers, Quantities, Orders, Revenue, Retention Rate, LTV.
 •	If any row is missing, state that clearly and proceed using what’s available.
 
-
-
 Output structure (use these section headings)
-    Title: LTV Review — Account Level (Cohort Analysis)
+    Title: LTV Review — Account Level (User Lifecycle Analysis)
     Executive Summary (bullets, 5–8 lines max)
-    LTV Theory — Why it Matters (short)
-    Common Trap to Avoid (short)
-    Use-Case Examples (3–4 bullets)
-    How We Defined the Cohort (short)
-    How to Read This Table (short)
-    Cohort Walk-throughs
-    •	A) 12-Month Cohort (oldest with ≥12 months of follow-up)
-    •	B) 6-Month Cohort (month with ≥6 months of follow-up)
-    •	C) 3-Month Cohort (month with ≥3 months of follow-up)
-    Benchmark Check (12-Month LTV vs First-Order AOV)
-    Implications & Next Moves (bullets)
-    Keep the tone crisp and businesslike. Use only the most decision-relevant numbers. Format key callouts as bold* and multiples as ****e.g., 3.2×****. 
-    Round money to whole currency (no cents), percentages to 1 decimal, and multiples to 1 decimal unless precision is needed.*
-
-    Polished explanations (use as your narrative)
-    LTV Theory — Why it Matters
-    The LTV is a metric used to value customers that a business acquires. It is a fundamental KPI used to analyze the health of our business’s marketing efforts. In online retail, operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
-    At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be compared (apples to apples) to other businesses or customer acquisition channels. The LTV of a cohort of customers is calculated by grouping customers into a cohort and then tracking their purchases over time.
-    Common Trap to Avoid
-    The LTV should be calculated for only one cohort of customers over a specific timeline. Some people fall into the “trap”, where they take a dataset of customers (say 12 months of data), find the number of customers, the sum of purchases per customer, etc. This is flawed because the customers in the later months in that data set do not have a chance to repurchase. Therefore, you always need to think of LTV (and calculate it) over a specific time horizon and track the purchases of a particular group of customers over time.
-    Use-Case Examples
-    •	Scaling with confidence: A weight-loss supplement brand had a first-order AOV of $22 and paid about $11 to acquire a customer (~2.0 ROAS at the order level). Their 12-month LTV was $105, which justified sustaining or even increasing acquisition spend despite thin first-order margins.
-    •	Product-level allocation: If account-level LTV looks modest, drill into product-level cohorts to find which SKUs drive higher retention and shift budget there.
-    •	Fixing the hero SKU: If the hero product shows a weak LTV (e.g., 1.5× first order), investigate root causes (rating, CX, expectations, formulation) before pushing spend.
-    •	Audience building: Use LTV insights to construct AMC audiences (e.g., high-propensity repeaters) for Sponsored Ads and DSP.
-    How We Defined the Cohort
-    For account-level analysis, define each cohort as unique new-to-brand (NTB) customers in a given month (no purchases from the brand in the prior 12 months, assuming ≥24 months of data). Then track that fixed group’s Active Customers, Quantities, Orders, Revenue, Retention, and LTV month by month for up to 12 months.
-    How to Read This Table
-    •	Active Customers: Number of unique NTB customers who purchased in that month.
-    •	Orders / Quantities / Revenue: Sales from that cohort in that month.
-    •	Retention Rate: % of the original cohort active in that month (or % of prior month - use the table’s definition; state which you see).
-    •	LTV: Cumulative revenue per original cohort customer through that month (if instead it’s total cumulative revenue, divide by the cohort size at P0).
-
 
     What to compute & how (be explicit and show the key numbers only)
     •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
@@ -1225,10 +1190,258 @@ SKU: {product_sku}
 COHORT ANALYSIS DATA:
 {cohort_data.to_string()}
 
-USER BREAKDOWN DATA:
-{user_breakdown_data.to_string()}
-
 Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations."""
+
+    # Call the LLM
+    analysis = call_chat(system_prompt, user_prompt, model)
+    
+    return {
+        'analysis': analysis
+    }
+
+def generate_top_products_table_explanation(top_products_data, model="gpt-4o-mini"):
+    """Generate LLM explanation for the top 10 products tables"""
+    
+    system_prompt = """You are an experienced e-commerce analyst. Analyze the top 10 product performance tables and provide clear, actionable insights.
+
+Your task is to explain what these four tables reveal about product performance and provide strategic recommendations.
+
+Output structure:
+## Product Portfolio Performance Analysis
+
+### Key Insights from Top Product Rankings
+- Analyze patterns across the four ranking categories
+- Identify products that appear in multiple top 10 lists
+- Note any surprises or standout performers
+
+### Strategic Observations
+- Comment on the relationship between acquired customers, repeat rate, AOV, and LTV
+- Identify which products drive volume vs. value
+- Point out any misalignments (high acquisition but low LTV, etc.)
+
+### Portfolio Optimization Recommendations
+- Suggest which products deserve more marketing investment
+- Identify products that may need attention (low repeat rates, low LTV despite high acquisition)
+- Recommend cross-sell or bundling opportunities
+
+Keep the analysis concise, executive-ready, and focused on actionable insights. Use bullet points for readability."""
+
+    # Format the data for the prompt
+    acquired_table = pd.DataFrame(top_products_data['top_acquired'])
+    repeat_table = pd.DataFrame(top_products_data['top_repeat'])
+    aov_table = pd.DataFrame(top_products_data['top_aov'])
+    ltv_table = pd.DataFrame(top_products_data['top_ltv'])
+
+    user_prompt = f"""Analyze these four top 10 product performance tables:
+
+TOP 10 PRODUCTS BY ACQUIRED CUSTOMERS:
+{acquired_table.to_string(index=False)}
+
+TOP 10 PRODUCTS BY REPEAT RATE:
+{repeat_table.to_string(index=False)}
+
+TOP 10 PRODUCTS BY AOV:
+{aov_table.to_string(index=False)}
+
+TOP 10 PRODUCTS BY LTV:
+{ltv_table.to_string(index=False)}
+
+Provide strategic insights and recommendations based on these rankings."""
+
+    analysis = call_chat(system_prompt, user_prompt, model)
+    return {'analysis': analysis}
+
+def generate_user_breakdown_explanation(user_breakdown_data, model="gpt-4o-mini"):
+    """Generate LLM explanation for user breakdown analysis"""
+    
+    system_prompt = """You are an experienced customer analytics specialist. Analyze the new vs old user breakdown data and provide clear insights about customer acquisition and retention patterns.
+
+Your task is to explain what the user breakdown data reveals about customer behavior and business health.
+
+Output structure:
+## User Acquisition & Retention Analysis
+
+### Customer Base Composition
+- Summarize the overall split between new and old users
+- Identify monthly trends in new user acquisition
+- Comment on old user retention patterns
+
+### Business Health Indicators
+- Assess whether the business is growing (more new users) or mature (more repeat users)
+- Identify any concerning trends in user acquisition or retention
+- Comment on seasonal patterns if visible
+
+### Strategic Implications
+- Recommend actions based on new vs old user ratios
+- Suggest focus areas for marketing and retention efforts
+- Identify months that may need special attention
+
+Keep the analysis concise, data-driven, and focused on actionable business insights."""
+
+    user_prompt = f"""Analyze this user breakdown data showing new vs old users over time:
+
+USER BREAKDOWN DATA:
+{user_breakdown_data.to_string(index=False)}
+
+Provide insights about customer acquisition patterns, retention trends, and business health indicators based on this data."""
+
+    analysis = call_chat(system_prompt, user_prompt, model)
+    return {'analysis': analysis}
+
+def generate_account_ltv_analysis(cohort_data, user_breakdown_data, model="gpt-4o-mini"):
+    """Generate LLM analysis for account-level LTV data"""
+    
+    # System prompt with the theory and instructions
+    system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
+    Read the attached cohort LTV data table and produce a concise, executive-ready report. 
+    Follow every instruction below precisely. 
+
+Your task is to analyze account-level LTV data and provide insights following this framework:
+
+What you have
+•	An account-level cohort table (CSV) with a column and monthly period columns (e.g., = month of entry, then P1 … P12).
+•	The Metric column includes exactly these rows (case-insensitive match): Active Customers, Quantities, Orders, Revenue, Retention Rate, LTV.
+•	If any row is missing, state that clearly and proceed using what’s available.
+
+Output structure (use these section headings)
+    Title: LTV Review — Account Level (User Lifecycle Analysis)
+    Executive Summary (bullets, 5–8 lines max, write it based on the “Cohort Walk-through”, “Benchmark check” and “Implications & Next moves” analysis that you will do below.)
+    LTV Theory — Why it Matters 
+    Common Trap to Avoid 
+    Use-Case Examples (3–4 bullets)
+    How We Defined the Cohort
+    How to Read This Table 
+    Cohort Walk-throughs
+    •	A) 12-Month Cohort (oldest with ≥12 months of follow-up)
+    •	B) 6-Month Cohort (month with ≥6 months of follow-up)
+    •	C) 3-Month Cohort (month with ≥3 months of follow-up)
+    Benchmark Check (12-Month LTV vs First-Order AOV)
+    Implications & Next Moves (bullets)
+    Keep the tone crisp and businesslike. Use only the most decision-relevant numbers. Format key callouts as bold* and multiples as ****e.g., 3.2×****. Round money to whole currency (no cents), percentages to 1 decimal, and multiples to 1 decimal unless precision is needed.*
+
+    Polished explanations (use the verbatim below)
+        Understanding and Applying LTV
+        Lifetime Value (LTV) is a core metric used to assess the long-term value of customers acquired by a business. It’s a foundational KPI for evaluating the effectiveness of marketing efforts, particularly in online retail, where LTV is often compared to Customer Acquisition Cost (CAC) to determine the ROI of advertising spend.
+        At its simplest, LTV represents the total purchases a customer makes over a defined time period. It’s critical that this timeline is explicitly stated, whether 6, 12, or 24 months, so LTV comparisons across channels, time periods, or businesses are accurate and meaningful.
+        LTV is calculated by grouping customers into cohorts and tracking their purchase behavior over time. This cohort-based approach allows for a more accurate and actionable view of how customer value evolves.
+        
+        A Common Pitfall to Avoid
+        One frequent mistake in calculating LTV is using an undifferentiated pool of customers over a fixed data range (e.g., 12 months), then summing purchases without considering when each customer entered the system. This approach is flawed because customers acquired in the later months haven’t had enough time to make repeat purchases.
+        LTV must always be tied to a **specific cohort, **a group of customers acquired at the same time, and measured over a fixed timeline. Only then can we accurately assess repeat behavior and long-term value.
+        
+        Why This Exercise Matters
+        This isn’t just about building a dashboard, it’s about uncovering insights that drive business growth. Here’s how:
+        1.	Improved Budgeting for Customer Acquisition
+        A weight loss supplement brand had a $22 average first order value (AOV) and was acquiring customers at a $2 ROAS, equivalent to $11 per customer. Initially, this looked unsustainable, with 50% of ad revenue going to acquisition. However, once they calculated the 12-month LTV, they found it reached $105. With this insight, they realized they could confidently maintain or even increase acquisition spend to accelerate growth.
+        2.	Product-Level Optimization
+        Analyzing LTV by product helps identify which SKUs drive higher retention and long-term value. This allows the brand to shift more ad budget toward high-LTV products, improving both profitability and sustainability.
+        3.	Avoiding Misguided Spend
+        If a flagship product has poor LTV, say just 1.5x its initial AOV, it may not justify additional ad investment. Instead, this insight signals a need to investigate root causes (e.g., low customer satisfaction or product ratings) before increasing spend.
+        4.	Smarter Audience Targeting via AMC
+        Using LTV-based cohorts, brands can create custom audiences within Amazon Marketing Cloud and activate them through both Sponsored and DSP campaigns, driving smarter, higher-ROI media strategies.
+        
+        Cohort Definition Methodology
+        For account-level analysis (aggregated across all products), we define a cohort as unique new-to-brand customers acquired in a specific month, who haven’t purchased from the brand in the past 12 months (assuming access to 24 months of data). Their purchasing behavior is then tracked monthly for up to 12 months to generate cohort-specific insights.
+        How to Read This Table
+        •	Active Customers: Number of unique NTB customers who purchased in that month.
+        •	Orders / Quantities / Revenue: Sales from that cohort in that month.
+        •	Retention Rate: % of the original cohort active in that month (or % of prior month - use the table’s definition; state which you see).
+        •	LTV: Cumulative revenue per original cohort customer through that month (if instead it’s total cumulative revenue, divide by the cohort size at P0).
+
+    
+    What to compute & how (be explicit and show the key numbers only)
+    •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
+    •	LTV multiple vs first order: For each analyzed cohort, compute LTV at horizon ÷ First-Order AOV. Present as X× (e.g., 3.2×).
+    •	Repeaters & repeat rate: You can get how many NTB customers (cohort size = Active Customers at ``) repeat in subsequent months from row “Active Customers” and the percentage of repeat from row “Retention Rate” of the original cohort. Summarize rather than listing every month.
+
+    Cohort walk-throughs (exactly how to pick them)
+    12-Month Cohort Analysis
+    Thoroughly review the first POME month data set across all 6 metrics, Active Customers, Quantities, Orders, Revenue, Retention Rate, and LTV, covering a 12-month account-level window. The report should include the following:
+    •	Total number of unique NTBs acquired in the P0 month.
+    •	Repeat behavior across months:
+    Track how many of these customers returned in each subsequent month, P1, P2, P3, P6, P12. Report the repeat rate (%) month by month and identify any noticeable patterns. Did the repeat rate drop sharply? If so, after which month? Was the drop-off consistent, or did it stabilize? Based on this, assess whether the repeat purchase behavior is front-loaded.
+    •	Performance contribution:
+    Break down how many orders these NTBs generated, how many units they purchased, and how much revenue they contributed, starting from P0, then compare to P2, P3, P6, and P12. Explain how each metric evolved over time.
+    •	LTV Analysis:
+    Compare the 3-month LTV to the average first purchase, how many times greater is it? Do the same for the 6-month and 12-month LTV. Express each as an “X times” multiple relative to the first purchase. 
+    You will find the info in the below table
+
+    6-Month Cohort Analysis
+    Repeat the same structure for the first POME month of the 6-month cohort:
+    •	Total unique NTBs in the P0 month.
+    •	Repeat rate month by month:
+    Detail how many NTBs repeated in P1, P2, P3, and P6, with their respective percentages. Comment on when the repeat rate drops sharply, if at all, and whether the pattern suggests front-loaded behavior.
+    •	Performance impact:
+    Highlight total orders, units sold, and revenue generated—starting from P0, then P2, P3, and P6. Show how these numbers changed over time.
+    •	LTV Commentary:
+    Compare the 3-month and 6-month LTV figures to the first order value. Calculate how many X the LTV is vs. the first purchase.
+
+    3-Month Cohort Analysis
+    Again, apply the same reporting logic to the 3-month cohort:
+    •	Total NTBs in the P0 month.
+    •	Retention trends:
+    Explain how many repeated in P1, P2, and P3, along with percentages. Analyze if and when the drop-offs happen and whether the repeat pattern is front-loaded.
+    •	Performance outcomes:
+    Narrate how many orders, units, and how much revenue was driven by these NTBs over P0, P2, and P3.
+    •	LTV Evaluation:
+    Compare the 3-month LTV to the first purchase value and express the uplift as a multiple.
+
+
+    Compare the 12-month account-level LTV multiple (not 6- or 3-month) to the first-order AOV against these category benchmarks. If you know the brand’s category, use it; if not, choose the closest match and say which you used.
+    [
+    {"category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5},
+    {"category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9},
+    {"category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10},
+    {"category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7},
+    {"category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
+    {"category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8},
+    {"category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
+    {"category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12},
+    {"category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6},
+    {"category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5}
+    ]
+    How to state it:
+    “12-mo LTV multiple = 3.2× vs first-order AOV. For [Chosen Category], that sits in the healthy range (2.5–4.0×) and below elite (≥4.0×).”
+
+    Implications & Next Moves
+    End with 5–8 bullet recommendations tailored to what you see, e.g.:
+    •	If 12-mo LTV multiple is healthy/elite, note room to raise CAC (or maintain) to capture share.
+    •	If weak, propose product-level cohort dive; shift budget toward SKUs with higher LTV.
+    •	If repeat rate is front-loaded, test post-purchase CX, subscriptions, and review pipelines.
+    •	If P0 AOV is low, test bundles/upsells to lift first-order economics.
+    •	If retention decays after a specific month, propose a lifecycle nudge (email/remarketing/loyalty).
+    •	Recommend AMC audiences based on high-propensity repeaters.
+
+
+    Guardrails
+    •	Do not hallucinate. If any row/column is missing or ambiguous, state it and explain the adjustment.
+    •	State assumptions (e.g., whether LTV in the table is “per customer” or “total”; use the table labels to decide).
+    •	Prefer short, skimmable paragraphs and bullets.
+    •	Show only the essential numbers for decisions (NTB size, repeat %, LTV multiple, and revenue at the horizon).
+    •	Use the brand’s currency as displayed.
+
+
+    Data handling notes (if needed)
+    •	First-Order AOV = P0 Revenue / P0 Orders for the cohort.
+    •	If LTV is not provided but cumulative Revenue is, compute Cumulative Revenue ÷ Cohort size at P0.
+    •	Repeaters = Count of unique customers who purchased in months P1+ (from Active Customers), expressed as % of P0.
+    •	When selecting the 12-, 6-, 3-month cohorts, confirm the last available month in the table and choose cohorts with at least that many periods of follow-up.
+
+
+"""
+
+    # Create user prompt with the actual data
+    user_prompt = f"""Analyze the account-level LTV performance across all products:
+
+SCOPE: Account-Level Analysis
+
+COHORT ANALYSIS DATA:
+{cohort_data.to_string()}
+
+Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations. Pay special attention to the Cumulative LTV and LTV Ratio metrics to understand how customer value compounds over time."""
 
     # Call the LLM
     analysis = call_chat(system_prompt, user_prompt, model)
@@ -1435,10 +1648,10 @@ def generate_product_data_files(product_raw, raw_data):
     zip_buffer.seek(0)
     return zip_buffer.getvalue()
 
-def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, user_breakdown_df, selected_product_sku, product_title, model="gpt-4o-mini"):
-    """Generate a clean PDF report showing cohort_table and user_breakdown_df for top 10 products"""
+def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_breakdown_df, model="gpt-4o-mini"):
+    """Generate a comprehensive LTV report with all components"""
     
-    # Create a temporary file
+    # Create a temporary file for the comprehensive report
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
     doc = SimpleDocTemplate(temp_file.name, pagesize=A4, rightMargin=50, leftMargin=50, topMargin=50, bottomMargin=50)
     
@@ -1450,7 +1663,7 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     title_style = ParagraphStyle(
         'CustomTitle',
         parent=styles['Title'],
-        fontSize=20,
+        fontSize=24,
         spaceAfter=30,
         alignment=TA_CENTER,
         textColor=colors.HexColor('#2c3e50')
@@ -1459,7 +1672,7 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     heading_style = ParagraphStyle(
         'CustomHeading',
         parent=styles['Heading2'],
-        fontSize=14,
+        fontSize=16,
         spaceAfter=15,
         spaceBefore=25,
         textColor=colors.HexColor('#34495e')
@@ -1468,7 +1681,7 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     subheading_style = ParagraphStyle(
         'CustomSubheading',
         parent=styles['Heading3'],
-        fontSize=12,
+        fontSize=14,
         spaceAfter=10,
         spaceBefore=15,
         textColor=colors.HexColor('#2c3e50')
@@ -1487,70 +1700,170 @@ def generate_comprehensive_product_report(product_raw, raw_data, cohort_table, u
     )
     
     # Title Page
-    elements.append(Paragraph("Top 10 Products - Data Report", title_style))
+    elements.append(Paragraph("Comprehensive LTV Analysis Report", title_style))
+    elements.append(Spacer(1, 30))
+    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y')}", styles['Normal']))
     elements.append(Spacer(1, 30))
     
-    # Get top 10 products by acquired customers
+    # 1. Account-Level LTV Analysis
+    elements.append(Paragraph("1. Account-Level LTV Analysis", heading_style))
+    
+    if client:  # Only generate if OpenAI client is available
+        try:
+            account_analysis = generate_account_ltv_analysis(cohort_table, user_breakdown_df, model)
+            if account_analysis['analysis']:
+                analysis_text = clean_text_for_pdf(account_analysis['analysis'])
+                elements.append(Paragraph(analysis_text, analysis_style))
+                elements.append(Spacer(1, 20))
+        except Exception as e:
+            elements.append(Paragraph(f"Account LTV analysis unavailable: {str(e)}", analysis_style))
+            elements.append(Spacer(1, 15))
+    else:
+        elements.append(Paragraph("Account-level LTV analysis is available when an OpenAI API key is provided.", analysis_style))
+        elements.append(Spacer(1, 20))
+    
+    elements.append(PageBreak())
+    
+    # 2. Top 10 Products Analysis
+    elements.append(Paragraph("2. Top Product Performance Tables", heading_style))
+    
+    # Calculate top products data
     top_products_data = calculate_top_products_tables(product_raw, raw_data)
+    
+    # Create tables for each category
+    table_style = TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ])
+    
+    # Top 10 by Acquired Customers
+    elements.append(Paragraph("2.1 Top 10 Products by Acquired Customers", subheading_style))
+    acquired_data = [['Rank', 'Product Title', 'Merchant SKU', 'Acquired Customers']]
+    for i, product in enumerate(top_products_data['top_acquired'], 1):
+        acquired_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                             product['Merchant SKU'], str(product['Acquired Customers'])])
+    
+    acquired_table = Table(acquired_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
+    acquired_table.setStyle(table_style)
+    elements.append(acquired_table)
+    elements.append(Spacer(1, 15))
+    
+    # Top 10 by Repeat Rate
+    elements.append(Paragraph("2.2 Top 10 Products by Repeat Rate", subheading_style))
+    repeat_data = [['Rank', 'Product Title', 'Merchant SKU', 'Repeat Rate']]
+    for i, product in enumerate(top_products_data['top_repeat'], 1):
+        repeat_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                           product['Merchant SKU'], product['Repeat Rate']])
+    
+    repeat_table = Table(repeat_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
+    repeat_table.setStyle(table_style)
+    elements.append(repeat_table)
+    elements.append(Spacer(1, 15))
+    
+    # Top 10 by AOV
+    elements.append(Paragraph("2.3 Top 10 Products by AOV", subheading_style))
+    aov_data = [['Rank', 'Product Title', 'Merchant SKU', 'AOV']]
+    for i, product in enumerate(top_products_data['top_aov'], 1):
+        aov_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                        product['Merchant SKU'], product['AOV']])
+    
+    aov_table = Table(aov_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
+    aov_table.setStyle(table_style)
+    elements.append(aov_table)
+    elements.append(Spacer(1, 15))
+    
+    # Top 10 by LTV
+    elements.append(Paragraph("2.4 Top 10 Products by LTV", subheading_style))
+    ltv_data = [['Rank', 'Product Title', 'Merchant SKU', 'LTV']]
+    for i, product in enumerate(top_products_data['top_ltv'], 1):
+        ltv_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                        product['Merchant SKU'], product['LTV']])
+    
+    ltv_table = Table(ltv_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
+    ltv_table.setStyle(table_style)
+    elements.append(ltv_table)
+    elements.append(Spacer(1, 20))
+    
+    # Top Products Table Analysis
+    elements.append(Paragraph("2.5 Product Portfolio Analysis", subheading_style))
+    if client:
+        try:
+            tables_analysis = generate_top_products_table_explanation(top_products_data, model)
+            if tables_analysis['analysis']:
+                analysis_text = clean_text_for_pdf(tables_analysis['analysis'])
+                elements.append(Paragraph(analysis_text, analysis_style))
+                elements.append(Spacer(1, 20))
+        except Exception as e:
+            elements.append(Paragraph(f"Product portfolio analysis unavailable: {str(e)}", analysis_style))
+            elements.append(Spacer(1, 15))
+    else:
+        elements.append(Paragraph("Product portfolio analysis is available when an OpenAI API key is provided.", analysis_style))
+        elements.append(Spacer(1, 20))
+    
+    elements.append(PageBreak())
+    
+    # 3. Individual Product Analysis for Top 10
+    elements.append(Paragraph("3. Individual Product LTV Analysis", heading_style))
+    elements.append(Paragraph("Detailed analysis for each of the top 10 products by acquired customers:", styles['Normal']))
+    elements.append(Spacer(1, 15))
+    
+    # Get top 10 products by acquired customers for individual analysis
     top_10_products = top_products_data['top_acquired'][:10]
     
-    # For each of the top 10 products, generate AI analysis and reference data files
     for i, product in enumerate(top_10_products, 1):
         product_sku = product['Merchant SKU']
         product_title = product['Product Title']
         
-        elements.append(PageBreak())
-        elements.append(Paragraph(f"{i}. {product_title}", heading_style))
-        elements.append(Paragraph(f"SKU: {product_sku}", subheading_style))
-        elements.append(Spacer(1, 15))
+        elements.append(Paragraph(f"3.{i} {product_title}", subheading_style))
+        elements.append(Paragraph(f"SKU: {product_sku}", styles['Normal']))
+        elements.append(Spacer(1, 10))
         
-        # Add data file references
-        elements.append(Paragraph("📊 Data Files Available for Download", subheading_style))
-        file_reference_style = ParagraphStyle(
-            'FileReference',
-            parent=styles['Normal'],
-            fontSize=9,
-            spaceAfter=8,
-            leftIndent=15,
-            textColor=colors.HexColor('#666666')
-        )
-        
-        # Clean SKU for filename (remove special characters)
-        safe_sku = "".join(c for c in product_sku if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        
-        elements.append(Paragraph(f"• <b>Cohort Analysis:</b> {safe_sku}_Cohort_Analysis.csv", file_reference_style))
-        elements.append(Paragraph(f"• <b>User Breakdown:</b> {safe_sku}_User_Breakdown.csv", file_reference_style))
-        elements.append(Paragraph(f"• <b>Product LTV Data:</b> {safe_sku}_Product_LTV.csv", file_reference_style))
-        elements.append(Spacer(1, 20))
-            
-        # Calculate data for AI analysis (but don't display tables)
-        try:
-            product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
-            product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
-            
-            # Generate LLM analysis for this product
-            if client:  # Only generate if OpenAI client is available
-                try:
-                    llm_result = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
-                    if llm_result['analysis']:
-                        elements.append(Paragraph("🤖 AI-Powered LTV Analysis & Strategic Insights", subheading_style))
-                        
-                        # Clean the analysis text for PDF generation
-                        analysis_text = clean_text_for_pdf(llm_result['analysis'])
-                        
-                        elements.append(Paragraph(analysis_text, analysis_style))
-                        elements.append(Spacer(1, 20))
-                except Exception as llm_error:
-                    elements.append(Paragraph(f"LLM Analysis unavailable: {str(llm_error)}", analysis_style))
-                    elements.append(Spacer(1, 15))
-            else:
-                elements.append(Paragraph("🤖 AI Analysis", subheading_style))
-                elements.append(Paragraph("AI-powered analysis is available when an OpenAI API key is provided. The analysis would include strategic insights, performance benchmarks, and specific recommendations for this product based on its LTV data.", analysis_style))
-                elements.append(Spacer(1, 20))
+        # Generate individual product analysis
+        if client:
+            try:
+                product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+                product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
                 
-        except Exception as e:
-            elements.append(Paragraph(f"Unable to generate analysis for {product_title}: {str(e)}", subheading_style))
+                product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
+                if product_analysis['analysis']:
+                    analysis_text = clean_text_for_pdf(product_analysis['analysis'])
+                    elements.append(Paragraph(analysis_text, analysis_style))
+                    elements.append(Spacer(1, 15))
+            except Exception as e:
+                elements.append(Paragraph(f"Analysis unavailable for {product_title}: {str(e)}", analysis_style))
+                elements.append(Spacer(1, 10))
+        else:
+            elements.append(Paragraph("Individual product analysis is available when an OpenAI API key is provided.", analysis_style))
             elements.append(Spacer(1, 15))
+        
+        if i < len(top_10_products):  # Don't add page break after last product
+            elements.append(PageBreak())
+    
+    # 4. User Breakdown Analysis
+    elements.append(PageBreak())
+    elements.append(Paragraph("4. User Acquisition & Retention Analysis", heading_style))
+    
+    if client and user_breakdown_df is not None:
+        try:
+            user_analysis = generate_user_breakdown_explanation(user_breakdown_df, model)
+            if user_analysis['analysis']:
+                analysis_text = clean_text_for_pdf(user_analysis['analysis'])
+                elements.append(Paragraph(analysis_text, analysis_style))
+                elements.append(Spacer(1, 20))
+        except Exception as e:
+            elements.append(Paragraph(f"User breakdown analysis unavailable: {str(e)}", analysis_style))
+            elements.append(Spacer(1, 15))
+    else:
+        elements.append(Paragraph("User breakdown analysis is available when an OpenAI API key is provided and user breakdown data is available.", analysis_style))
+        elements.append(Spacer(1, 20))
     
     # Build PDF
     doc.build(elements)
@@ -2289,23 +2602,27 @@ def main():
                 
                 st.markdown("---")
                 
-                st.markdown("**Enhanced Report Includes:**")
+                st.markdown("**Comprehensive LTV Report Includes:**")
                 st.markdown("""
-                • **🤖 AI-Powered LTV Analysis** - Expert insights and recommendations for each of the top 10 products (when API key provided)
-                • **📊 Data File References** - Clear references to downloadable data files for each product
-                • Business growth recommendations and strategic insights
-                • Industry benchmark comparisons  
-                • Clean, professional format optimized for executive presentations
-                • Separate downloadable data files for detailed analysis
+                • **🏢 Account-Level LTV Analysis** - Overall business performance across all products with cohort walk-throughs and benchmark comparisons
+                • **🏆 Top 10 Product Performance Tables** - Rankings by Acquired Customers, Repeat Rate, AOV, and LTV with strategic insights
+                • **🔍 Individual Product Analysis** - Detailed LTV analysis for each of the top 10 products by acquired customers
+                • **👥 User Acquisition & Retention Analysis** - New vs returning customer patterns and business health indicators
+                • **🤖 AI-Powered Insights** - Expert recommendations and strategic guidance throughout (when API key provided)
+                • **📊 Professional Formatting** - Executive-ready report optimized for presentations and decision-making
                 """)
                 
                 # Generate comprehensive report button
-                if st.button("🚀 Generate Top 10 Products Data Report", type="primary"):
-                    with st.spinner("Generating data report for top 10 products..."):
+                if st.button("🚀 Generate Comprehensive LTV Report", type="primary"):
+                    with st.spinner("Generating comprehensive LTV report..."):
                         try:
-                            # Generate the PDF report (no need for specific product selection)
-                            pdf_path = generate_comprehensive_product_report(
-                                product_raw, raw_data, None, None, None, None, model_choice
+                            # Calculate account-level cohort analysis and user breakdown for the comprehensive report
+                            account_cohort_table, _ = calculate_cohort_analysis(raw_data, "All")
+                            account_user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, "All")
+                            
+                            # Generate the comprehensive PDF report
+                            pdf_path = generate_comprehensive_ltv_report(
+                                product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
                             )
                             
                             # Read the PDF file
@@ -2314,11 +2631,11 @@ def main():
                             
                             # Provide download button
                             ai_status = "with AI-powered insights" if client else "with data tables only"
-                            st.success(f"✅ Top 10 products data report generated successfully {ai_status}!")
+                            st.success(f"✅ Comprehensive LTV report generated successfully {ai_status}!")
                             st.download_button(
-                                label="📥 Download Top 10 Products Data Report",
+                                label="📥 Download Comprehensive LTV Report",
                                 data=pdf_bytes,
-                                file_name=f"Top_10_Products_Data_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                file_name=f"Comprehensive_LTV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                                 mime="application/pdf"
                             )
                             
