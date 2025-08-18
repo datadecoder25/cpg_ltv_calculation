@@ -389,7 +389,7 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
     cohort_df = pd.DataFrame(cohort_data)
     
     # Create metrics structure
-    metrics = ['Active Customers', 'Quantities', 'Orders', 'Revenue', 'Retention Rate', 'LTV'] #'Cumulative Revenue',
+    metrics = ['Active Customers', 'Quantities', 'Orders', 'Revenue', 'Retention Rate', 'LTV', 'Cumulative LTV', 'LTV Ratio'] #'Cumulative Revenue',
     month_columns = sorted(all_months)
     
     # Create the base structure
@@ -541,11 +541,95 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                     else:
                         filled_table.at[idx, month_col] = "$0.00"
     
+    # Handle Cumulative LTV calculation
+    for idx, row in filled_table.iterrows():
+        if row['Metric'] == 'Cumulative LTV':
+            pome_month = row['POME Month']
+            cohort_size = row['Cohort Size']
+            
+            for month_col in month_columns:
+                if month_col < pome_month:
+                    filled_table.at[idx, month_col] = "$0.00"
+                else:
+                    # Find the corresponding LTV row for this POME Month
+                    ltv_row_idx = None
+                    for ltv_idx, ltv_row in filled_table.iterrows():
+                        if (ltv_row['POME Month'] == pome_month and ltv_row['Metric'] == 'LTV'):
+                            ltv_row_idx = ltv_idx
+                            break
+                    
+                    if ltv_row_idx is not None:
+                        # Calculate cumulative LTV from first valid month to current month
+                        cumulative_ltv = 0
+                        for cum_month_col in month_columns:
+                            if cum_month_col < pome_month:
+                                continue
+                            if cum_month_col > month_col:
+                                break
+                                
+                            ltv_str = filled_table.at[ltv_row_idx, cum_month_col]
+                            if isinstance(ltv_str, str) and ltv_str.startswith('$'):
+                                ltv_value = float(ltv_str.replace('$', '').replace(',', ''))
+                            else:
+                                ltv_value = float(ltv_str) if ltv_str else 0
+                            cumulative_ltv += ltv_value
+                        
+                        filled_table.at[idx, month_col] = f"${round(cumulative_ltv, 2):.2f}"
+                    else:
+                        filled_table.at[idx, month_col] = "$0.00"
+    
+    # Handle LTV Ratio calculation 
+    for idx, row in filled_table.iterrows():
+        if row['Metric'] == 'LTV Ratio':
+            pome_month = row['POME Month']
+            
+            # Find the corresponding Cumulative LTV row for this POME Month
+            cumulative_ltv_row_idx = None
+            for cum_idx, cum_row in filled_table.iterrows():
+                if (cum_row['POME Month'] == pome_month and cum_row['Metric'] == 'Cumulative LTV'):
+                    cumulative_ltv_row_idx = cum_idx
+                    break
+            
+            # Find the corresponding LTV row for this POME Month to get first month LTV
+            ltv_row_idx = None
+            for ltv_idx, ltv_row in filled_table.iterrows():
+                if (ltv_row['POME Month'] == pome_month and ltv_row['Metric'] == 'LTV'):
+                    ltv_row_idx = ltv_idx
+                    break
+            
+            if cumulative_ltv_row_idx is not None and ltv_row_idx is not None:
+                # Get first month LTV (the LTV value for the POME month itself)
+                first_ltv_str = filled_table.at[ltv_row_idx, pome_month]
+                if isinstance(first_ltv_str, str) and first_ltv_str.startswith('$'):
+                    first_ltv = float(first_ltv_str.replace('$', '').replace(',', ''))
+                else:
+                    first_ltv = float(first_ltv_str) if first_ltv_str else 0
+                
+                for month_col in month_columns:
+                    if month_col < pome_month:
+                        filled_table.at[idx, month_col] = "0.00x"
+                    else:
+                        cumulative_ltv_str = filled_table.at[cumulative_ltv_row_idx, month_col]
+                        if isinstance(cumulative_ltv_str, str) and cumulative_ltv_str.startswith('$'):
+                            cumulative_ltv = float(cumulative_ltv_str.replace('$', '').replace(',', ''))
+                        else:
+                            cumulative_ltv = float(cumulative_ltv_str) if cumulative_ltv_str else 0
+                        
+                        if first_ltv > 0:
+                            ratio = cumulative_ltv / first_ltv
+                            filled_table.at[idx, month_col] = f"{round(ratio, 2):.2f}x"
+                        else:
+                            filled_table.at[idx, month_col] = "0.00x"
+            else:
+                # If we can't find the required rows, fill with 0.00x
+                for month_col in month_columns:
+                    filled_table.at[idx, month_col] = "0.00x"
+    
     # Calculate Total column
     for idx, row in filled_table.iterrows():
         metric = row['Metric']
         
-        if metric in ['Revenue', 'LTV']:
+        if metric in ['Revenue', 'LTV', 'Cumulative LTV']:
             # Handle formatted monetary values
             total_value = 0
             for month in month_columns:
@@ -574,6 +658,22 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
                 filled_table.at[idx, 'Total'] = f"{round(avg_retention, 2):.2f}%"
             else:
                 filled_table.at[idx, 'Total'] = "0.00%"
+        elif metric == 'LTV Ratio':
+            # Handle ratio values - calculate average ratio
+            total_values = []
+            for month in month_columns:
+                value_str = row[month]
+                if isinstance(value_str, str) and value_str.endswith('x'):
+                    value = float(value_str.replace('x', ''))
+                    total_values.append(value)
+                elif isinstance(value_str, (int, float)):
+                    total_values.append(float(value_str))
+            
+            if total_values:
+                avg_ratio = sum(total_values) / len(total_values)
+                filled_table.at[idx, 'Total'] = f"{round(avg_ratio, 2):.2f}x"
+            else:
+                filled_table.at[idx, 'Total'] = "0.00x"
         else:
             # Handle count metrics (Active Customers, Quantities, Orders)
             total_value = sum([row[month] for month in month_columns])
@@ -1004,37 +1104,117 @@ def generate_product_ltv_analysis(product_sku, product_title, cohort_data, user_
     """Generate LLM analysis for a specific product's LTV data"""
     
     # System prompt with the theory and instructions
-    system_prompt = """You are an expert e-commerce analyst specializing in customer lifetime value (LTV) analysis. 
+    system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
+    Read the attached cohort LTV data table and produce a concise, executive-ready report. 
+    Follow every instruction below precisely. 
 
 Your task is to analyze product-level LTV data and provide insights following this framework:
 
-THEORY:
-The LTV is a metric used to value customers that a business acquires. It is a fundamental KPI used to analyze the health of our business's marketing efforts. In online retail, operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
+What you have
+•	An account-level cohort table (CSV) with a column and monthly period columns (e.g., = month of entry, then P1 … P12).
+•	The Metric column includes exactly these rows (case-insensitive match): Active Customers, Quantities, Orders, Revenue, Retention Rate, LTV.
+•	If any row is missing, state that clearly and proceed using what’s available.
 
-At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be compared (apples to apples) to other businesses or customer acquisition channels.
 
-CRITICAL INSIGHT: This is not a dashboarding exercise. The objective is to leverage the insights to support business growth.
 
-WHY PRODUCT-LEVEL ANALYSIS MATTERS:
-- If the LTV is 2x compared to a first-time purchase, or if the LTV is not impressive at the account level, then examine the product level to determine what can be done
-- Even when the account level LTV is impressive, analyze what products are driving it (weight the LTV based on sales as it may be misleading otherwise)
-- Diving deep into product-level LTV allows you to understand which product is driving more retention and higher LTV, and allocate your ad spending on them
-- You can identify hero products with poor LTV before pushing them with ads
+Output structure (use these section headings)
+    Title: LTV Review — Account Level (Cohort Analysis)
+    Executive Summary (bullets, 5–8 lines max)
+    LTV Theory — Why it Matters (short)
+    Common Trap to Avoid (short)
+    Use-Case Examples (3–4 bullets)
+    How We Defined the Cohort (short)
+    How to Read This Table (short)
+    Cohort Walk-throughs
+    •	A) 12-Month Cohort (oldest with ≥12 months of follow-up)
+    •	B) 6-Month Cohort (month with ≥6 months of follow-up)
+    •	C) 3-Month Cohort (month with ≥3 months of follow-up)
+    Benchmark Check (12-Month LTV vs First-Order AOV)
+    Implications & Next Moves (bullets)
+    Keep the tone crisp and businesslike. Use only the most decision-relevant numbers. Format key callouts as bold* and multiples as ****e.g., 3.2×****. 
+    Round money to whole currency (no cents), percentages to 1 decimal, and multiples to 1 decimal unless precision is needed.*
 
-BENCHMARKS:
-- Snacks/pantry: ~2.5–4× is healthy; 4–5× best-in-class
-- Supplements: ~4–7× is healthy; 7–9× elite
+    Polished explanations (use as your narrative)
+    LTV Theory — Why it Matters
+    The LTV is a metric used to value customers that a business acquires. It is a fundamental KPI used to analyze the health of our business’s marketing efforts. In online retail, operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
+    At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be compared (apples to apples) to other businesses or customer acquisition channels. The LTV of a cohort of customers is calculated by grouping customers into a cohort and then tracking their purchases over time.
+    Common Trap to Avoid
+    The LTV should be calculated for only one cohort of customers over a specific timeline. Some people fall into the “trap”, where they take a dataset of customers (say 12 months of data), find the number of customers, the sum of purchases per customer, etc. This is flawed because the customers in the later months in that data set do not have a chance to repurchase. Therefore, you always need to think of LTV (and calculate it) over a specific time horizon and track the purchases of a particular group of customers over time.
+    Use-Case Examples
+    •	Scaling with confidence: A weight-loss supplement brand had a first-order AOV of $22 and paid about $11 to acquire a customer (~2.0 ROAS at the order level). Their 12-month LTV was $105, which justified sustaining or even increasing acquisition spend despite thin first-order margins.
+    •	Product-level allocation: If account-level LTV looks modest, drill into product-level cohorts to find which SKUs drive higher retention and shift budget there.
+    •	Fixing the hero SKU: If the hero product shows a weak LTV (e.g., 1.5× first order), investigate root causes (rating, CX, expectations, formulation) before pushing spend.
+    •	Audience building: Use LTV insights to construct AMC audiences (e.g., high-propensity repeaters) for Sponsored Ads and DSP.
+    How We Defined the Cohort
+    For account-level analysis, define each cohort as unique new-to-brand (NTB) customers in a given month (no purchases from the brand in the prior 12 months, assuming ≥24 months of data). Then track that fixed group’s Active Customers, Quantities, Orders, Revenue, Retention, and LTV month by month for up to 12 months.
+    How to Read This Table
+    •	Active Customers: Number of unique NTB customers who purchased in that month.
+    •	Orders / Quantities / Revenue: Sales from that cohort in that month.
+    •	Retention Rate: % of the original cohort active in that month (or % of prior month - use the table’s definition; state which you see).
+    •	LTV: Cumulative revenue per original cohort customer through that month (if instead it’s total cumulative revenue, divide by the cohort size at P0).
 
-FORMATTING REQUIREMENTS:
-Your response MUST be well-structured with simple, clean formatting for PDF generation:
-- Use **bold text** for main headings (markdown style)
-- Use simple bullet points with - for lists
-- Use plain text only - NO HTML tags, NO special characters, NO emojis
-- Use line breaks between sections
-- Keep paragraphs concise and scannable
-- Use CAPS for emphasis instead of special formatting
 
-Your response should be professional, actionable, and focused on business growth insights with clear, simple structure."""
+    What to compute & how (be explicit and show the key numbers only)
+    •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
+    •	LTV multiple vs first order: For each analyzed cohort, compute LTV at horizon ÷ First-Order AOV. Present as X× (e.g., 3.2×).
+    •	Repeaters & repeat rate: You can get how many NTB customers (cohort size = Active Customers at ``) repeat in subsequent months from row “Active Customers” and the percentage of repeat from row “Retention Rate” of the original cohort. Summarize rather than listing every month.
+
+    Cohort walk-throughs (exactly how to pick them)
+    Find and discuss three cohorts:
+    1.	12-Month Cohort: The earliest cohort that has data from P0 through \*\* (or if months are 0–11)**.
+    2.	6-Month Cohort: The most recent cohort with at least `` filled.
+    3.	3-Month Cohort: The most recent cohort with at least `` filled.
+    For each cohort, cover these points (short paragraph + 3–5 bullets):
+    •	NTB size: total unique NTBs in P0 (the cohort size).
+    •	Repeat behavior: how many of them repeated over the window and the % of the original cohort; call out any strong months or drop-offs.
+    •	Commercial impact: resulting Orders, Units, and Revenue (summarize at the horizon).
+    •	LTV vs first order: LTV multiple at the horizon (e.g., “12-mo LTV is 3.8× first-order AOV”).
+    Keep the narration instructional: show how to read the table and why each metric matters.
+
+    Benchmark check (use this JSON)
+    Compare the 12-month account-level LTV multiple (not 6- or 3-month) to the first-order AOV against these category benchmarks. If you know the brand’s category, use it; if not, choose the closest match and say which you used.
+    [
+    {"category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5},
+    {"category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9},
+    {"category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10},
+    {"category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7},
+    {"category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
+    {"category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8},
+    {"category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
+    {"category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
+    {"category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12},
+    {"category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6},
+    {"category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5}
+    ]
+    How to state it:
+    “12-mo LTV multiple = 3.2× vs first-order AOV. For [Chosen Category], that sits in the healthy range (2.5–4.0×) and below elite (≥4.0×).”
+
+
+    Implications & Next Moves
+    End with 5–8 bullet recommendations tailored to what you see, e.g.:
+    •	If 12-mo LTV multiple is healthy/elite, note room to raise CAC (or maintain) to capture share.
+    •	If weak, propose product-level cohort dive; shift budget toward SKUs with higher LTV.
+    •	If repeat rate is front-loaded, test post-purchase CX, subscriptions, and review pipelines.
+    •	If P0 AOV is low, test bundles/upsells to lift first-order economics.
+    •	If retention decays after a specific month, propose a lifecycle nudge (email/remarketing/loyalty).
+    •	Recommend AMC audiences based on high-propensity repeaters.
+
+    Guardrails
+    •	Do not hallucinate. If any row/column is missing or ambiguous, state it and explain the adjustment.
+    •	State assumptions (e.g., whether LTV in the table is “per customer” or “total”; use the table labels to decide).
+    •	Prefer short, skimmable paragraphs and bullets.
+    •	Show only the essential numbers for decisions (NTB size, repeat %, LTV multiple, and revenue at the horizon).
+    •	Use the brand’s currency as displayed.
+
+    Data handling notes (if needed)
+    •	First-Order AOV = P0 Revenue / P0 Orders for the cohort.
+    •	If LTV is not provided but cumulative Revenue is, compute Cumulative Revenue ÷ Cohort size at P0.
+    •	Repeaters = Count of unique customers who purchased in months P1+ (from Active Customers), expressed as % of P0.
+    •	When selecting the 12-, 6-, 3-month cohorts, confirm the last available month in the table and choose cohorts with at least that many periods of follow-up.
+
+"""
 
     # Create user prompt with the actual data
     user_prompt = f"""Analyze the LTV performance for this product:
@@ -1047,33 +1227,6 @@ COHORT ANALYSIS DATA:
 
 USER BREAKDOWN DATA:
 {user_breakdown_data.to_string()}
-
-Please provide a well-structured analysis with the following sections (use simple, clean formatting):
-
-**LTV PERFORMANCE SUMMARY**
-- Overall LTV metrics and trends
-- Key performance indicators
-- Monthly progression analysis
-
-**CUSTOMER BEHAVIOR INSIGHTS**
-- Retention patterns and trends
-- Purchase frequency analysis
-- Customer lifecycle observations
-
-**GROWTH RECOMMENDATIONS**
-- Specific actionable strategies
-- Priority initiatives for improvement
-- Resource allocation suggestions
-
-**INDUSTRY BENCHMARK COMPARISON**
-- Performance vs industry standards
-- Competitive positioning assessment
-- Areas of strength and weakness
-
-**STRATEGIC AD SPENDING IMPLICATIONS**
-- Investment recommendations
-- Channel optimization opportunities
-- Risk factors and considerations
 
 Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations."""
 
@@ -1209,8 +1362,16 @@ def clean_text_for_pdf(text):
     
     import re
     
+    # Convert markdown headers to HTML headers
+    text = re.sub(r'^### (.*?)$', r'<br/><b><u>\1</u></b><br/>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.*?)$', r'<br/><br/><b><font size="14">\1</font></b><br/>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.*?)$', r'<br/><br/><b><font size="16">\1</font></b><br/><br/>', text, flags=re.MULTILINE)
+    
     # Convert markdown-style bold to HTML bold
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    
+    # Convert markdown-style italic to HTML italic
+    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
     
     # Replace bullet points with simple dashes
     text = text.replace('•', '-').replace('◦', '-').replace('—', '-')
@@ -1498,214 +1659,8 @@ def generate_pdf_report(cohort_table, selected_sku, raw_data, user_breakdown_df)
             avg_first_ltv = sum(first_month_ltv_values) / len(first_month_ltv_values)
             avg_latest_ltv = sum(latest_ltv_values) / len(latest_ltv_values)
             ltv_multiplier = avg_latest_ltv / avg_first_ltv if avg_first_ltv > 0 else 0
-            
-            # Performance assessment
-            if ltv_multiplier >= 7:
-                performance = "Elite"
-                assessment = "Your LTV performance is exceptional. This indicates strong product-market fit and excellent customer retention."
-            elif ltv_multiplier >= 4:
-                performance = "Healthy"
-                assessment = "Your LTV metrics show solid performance with good growth potential."
-            elif ltv_multiplier >= 2.5:
-                performance = "Moderate"
-                assessment = "Your LTV is acceptable but has significant room for improvement."
-            else:
-                performance = "Needs Improvement"
-                assessment = "LTV performance requires immediate attention to ensure sustainable growth."
-            
-            summary_text = f"This analysis covers {len(ltv_data)} customer cohorts representing {total_customers:,} total customers. The average first-month LTV is ${avg_first_ltv:.2f}, growing to ${avg_latest_ltv:.2f} over the tracking period, representing a {ltv_multiplier:.1f}x multiplier. This performance is classified as {performance}. {assessment}"
-            
-            elements.append(Paragraph(summary_text, body_style))
+                        
             elements.append(Spacer(1, 20))
-    
-    # Theory Section
-    elements.append(Paragraph("Understanding Customer Lifetime Value", heading_style))
-    
-    theory_text = """
-    The Lifetime Value (LTV) is a critical metric used to value customers that a business acquires. 
-    It is a fundamental KPI used to analyze the health of our business's marketing efforts. In online retail, 
-    operators will often compare the LTV to the cost to acquire a customer (CAC) to measure the ROI of advertising spend.
-    
-    At a high level, the lifetime value of a customer is equivalent to the purchases a customer makes over a given timeline. 
-    The LTV should always be defined by a particular time horizon (e.g., 6 months, 12 months, 24 months) so it can be 
-    compared (apples to apples) to other businesses or customer acquisition channels. The LTV of a cohort of customers 
-    is calculated by grouping customers into a cohort and then tracking their purchases over time.
-    """
-    
-    elements.append(Paragraph(theory_text, body_style))
-    elements.append(Spacer(1, 15))
-    
-    # The Critical Trap
-    elements.append(Paragraph("The Critical Trap to Avoid", subheading_style))
-    
-    trap_text = """
-    <b>Very Important!</b> The LTV should be calculated for only one cohort of customers over a specific timeline. 
-    Some people fall into the "trap", where they take a dataset of customers (say 12 months of data), find the number 
-    of customers, the sum of purchases per customer, etc. This is flawed because the customers in the later months 
-    in that data set do not have a chance to repurchase. Therefore, you always need to think of LTV (and calculate it) 
-    over a specific time horizon and track the purchases of a particular group of customers over time.
-    """
-    
-    elements.append(Paragraph(trap_text, body_style))
-    elements.append(Spacer(1, 20))
-    
-    # Real-World Example
-    elements.append(Paragraph("Real-World Business Impact", subheading_style))
-    
-    example_text = """
-    <b>Case Study: Weight Loss Supplement Brand</b><br/>
-    • First Order AOV: $22<br/>
-    • Customer Acquisition Cost: $11 (ROAS of 2.0)<br/>
-    • Initial Assessment: Appeared unprofitable (50% of revenue spent on ads)<br/>
-    • 12-Month LTV: $105 (4.8× first purchase)<br/>
-    • Result: High LTV justified aggressive acquisition spending and confident scaling of marketing investment<br/><br/>
-    
-    This example demonstrates why LTV analysis is not just a dashboarding exercise—the objective is to leverage 
-    insights to support business growth.
-    """
-    
-    elements.append(Paragraph(example_text, body_style))
-    elements.append(Spacer(1, 20))
-    
-    # Strategic Use Cases
-    elements.append(Paragraph("Strategic Use Cases", subheading_style))
-    
-    use_cases_text = """
-    <b>1. Marketing ROI Optimization:</b> Diving deep into product-level LTV allows you to understand which products 
-    drive more retention and higher LTV, enabling you to allocate ad spending accordingly for long-term brand growth and profitability.<br/><br/>
-    
-    <b>2. Quality Control:</b> If your LTV analysis reveals your hero product has poor LTV (e.g., just 1.5× your first purchase AOV), 
-    you can investigate root causes (like low product ratings) and fix them before scaling with ads.<br/><br/>
-    
-    <b>3. Advanced Targeting:</b> Create custom audiences using these insights on Amazon Marketing Cloud (AMC) for both 
-    sponsored and DSP ads.<br/><br/>
-    
-    <b>4. Investment Decisions:</b> Compare LTV to CAC across channels to determine optimal budget allocation and identify 
-    the most profitable customer acquisition strategies.
-    """
-    
-    elements.append(Paragraph(use_cases_text, body_style))
-    elements.append(PageBreak())
-    
-    # Cohort Definition
-    elements.append(Paragraph("Our Cohort Definition", heading_style))
-    
-    cohort_def_text = """
-    We define cohorts as unique new-to-brand customers in a specific month who haven't purchased from your brand 
-    in the last 12 months (provided we have access to 24 months of data). We then measure how this specific group 
-    of people behave month over month for up to 12 months.
-    """
-    
-    elements.append(Paragraph(cohort_def_text, body_style))
-    elements.append(Spacer(1, 20))
-    
-    # Data Interpretation
-    elements.append(Paragraph("How to Read Your Cohort Analysis", heading_style))
-    
-    if not ltv_data.empty:
-        # Get first cohort for example
-        first_cohort = ltv_data.iloc[0]
-        pome_month = first_cohort['POME Month']
-        cohort_size = first_cohort['Cohort Size']
-        
-        # Find corresponding revenue data
-        revenue_row = revenue_data[revenue_data['POME Month'] == pome_month]
-        
-        interpretation_text = f"""
-        <b>Example: {pome_month} Cohort Analysis</b><br/><br/>
-        
-        This cohort represents {cohort_size} unique new-to-brand customers who made their first purchase in {pome_month}. 
-        Let's examine their behavior over time:<br/><br/>
-        
-        <b>First Month ({pome_month}):</b><br/>
-        """
-        
-        if not revenue_row.empty and pome_month in month_columns:
-            first_month_revenue = revenue_row.iloc[0][pome_month]
-            first_month_ltv = first_cohort[pome_month]
-            
-            interpretation_text += f"""
-            • Total Revenue: {first_month_revenue}<br/>
-            • LTV per Customer: {first_month_ltv}<br/>
-            • This represents the initial purchase behavior of this customer group.<br/><br/>
-            """
-        
-        # Show progression over time
-        if len(month_columns) > 1:
-            next_months = [col for col in month_columns[1:3] if col > pome_month]  # Next 2 months
-            for i, month in enumerate(next_months):
-                if month in first_cohort.index:
-                    month_ltv = first_cohort[month]
-                    interpretation_text += f"""
-                    <b>Month {i+2} ({month}):</b><br/>
-                    • Cumulative LTV per Customer: {month_ltv}<br/>
-                    • This shows how customer value grows through repeat purchases.<br/><br/>
-                    """
-        
-        elements.append(Paragraph(interpretation_text, body_style))
-        elements.append(Spacer(1, 20))
-    
-    # Performance Benchmarks
-    elements.append(Paragraph("Industry Performance Benchmarks", subheading_style))
-    
-    benchmarks_text = """
-    <b>Snacks/Pantry Products:</b><br/>
-    • Healthy Performance: 2.5-4× first purchase<br/>
-    • Best-in-Class: 4-5× first purchase<br/><br/>
-    
-    <b>Supplements:</b><br/>
-    • Healthy Performance: 4-7× first purchase<br/>
-    • Elite Performance: 7-9× first purchase<br/><br/>
-    
-    Use these benchmarks to assess your performance relative to industry standards and identify improvement opportunities.
-    """
-    
-    elements.append(Paragraph(benchmarks_text, body_style))
-    elements.append(Spacer(1, 30))
-    
-    # Key Insights and Recommendations
-    if 'ltv_multiplier' in locals():
-        elements.append(Paragraph("Strategic Recommendations", heading_style))
-        
-        if ltv_multiplier >= 7:
-            recommendations = """
-            <b>Elite Performance Detected!</b><br/>
-            Your LTV performance is in the top tier. Consider these growth strategies:<br/>
-            • Scale acquisition aggressively - your unit economics support it<br/>
-            • Expand to new customer segments with confidence<br/>
-            • Increase ad spend limits - customers are proving their long-term value<br/>
-            • Launch premium products - your customers show high lifetime value
-            """
-        elif ltv_multiplier >= 4:
-            recommendations = """
-            <b>Healthy Performance!</b><br/>
-            Your LTV metrics are solid. Optimization opportunities:<br/>
-            • Selective acquisition scaling in best-performing channels<br/>
-            • A/B test higher CAC limits - you have room to grow<br/>
-            • Focus on retention improvements to push into elite territory<br/>
-            • Analyze top-performing cohorts and replicate success factors
-            """
-        elif ltv_multiplier >= 2.5:
-            recommendations = """
-            <b>Moderate Performance</b><br/>
-            Your LTV is acceptable but has room for improvement:<br/>
-            • Prioritize retention initiatives before scaling acquisition<br/>
-            • Product experience optimization should be your focus<br/>
-            • Customer satisfaction surveys to identify improvement areas<br/>
-            • Conservative acquisition spending until LTV improves
-            """
-        else:
-            recommendations = """
-            <b>Performance Needs Immediate Attention</b><br/>
-            LTV below 2.5× indicates serious issues:<br/>
-            • Pause aggressive acquisition until fundamentals improve<br/>
-            • Deep-dive into product quality and customer experience<br/>
-            • Review pricing strategy - may be too high for value delivered<br/>
-            • Focus on existing customer retention before acquiring new ones<br/>
-            • Investigate root causes: reviews, ratings, competitor analysis
-            """
-        
-        elements.append(Paragraph(recommendations, body_style))
     
     # Build PDF
     doc.build(elements)
