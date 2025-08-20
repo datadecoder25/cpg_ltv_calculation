@@ -1351,7 +1351,7 @@ Output structure (use these section headings)
     
     What to compute & how (be explicit and show the key numbers only)
     •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
-    •	LTV multiple vs first order: For each analyzed cohort, compute LTV at horizon ÷ First-Order AOV. Present as X× (e.g., 3.2×).
+    •	LTV multiple vs first order: For each analyzed cohort, use the LTV ratio Metric in the table for each cohort.
     •	Repeaters & repeat rate: You can get how many NTB customers (cohort size = Active Customers at ``) repeat in subsequent months from row “Active Customers” and the percentage of repeat from row “Retention Rate” of the original cohort. Summarize rather than listing every month.
 
     Cohort walk-throughs (exactly how to pick them)
@@ -1364,7 +1364,7 @@ Output structure (use these section headings)
     Break down how many orders these NTBs generated, how many units they purchased, and how much revenue they contributed, starting from P0, then compare to P2, P3, P6, and P12. Explain how each metric evolved over time.
     •	LTV Analysis:
     Compare the 3-month LTV to the average first purchase, how many times greater is it? Do the same for the 6-month and 12-month LTV. Express each as an “X times” multiple relative to the first purchase. 
-    You will find the info in the below table
+    You will find the info in the COHORT ANALYSIS DATA table.
 
     6-Month Cohort Analysis
     Repeat the same structure for the first POME month of the 6-month cohort:
@@ -2566,7 +2566,7 @@ def main():
                         st.error("Please ensure ProductRaw and RawData have been calculated successfully.")
             
             with tab8:
-                st.header("📄 Top 10 Products Data Report")
+                st.header("📄 Comprehensive Report")
                 st.markdown("**Generate a comprehensive PDF report with cohort analysis, user breakdown tables, and AI-powered LTV insights for all top 10 products**")
                 
                 # OpenAI Configuration Section
