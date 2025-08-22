@@ -16,6 +16,11 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 import tempfile
 import os
 from openai import OpenAI
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml.shared import OxmlElement, qn
 
 # Set page config
 st.set_page_config(
@@ -1305,12 +1310,7 @@ What you have
 
 Output structure (use these section headings)
     Title: LTV Review — Account Level (User Lifecycle Analysis)
-    Executive Summary (bullets, 5–8 lines max, write it based on the “Cohort Walk-through”, “Benchmark check” and “Implications & Next moves” analysis that you will do below.)
-    LTV Theory — Why it Matters 
-    Common Trap to Avoid 
-    Use-Case Examples (3–4 bullets)
-    How We Defined the Cohort
-    How to Read This Table 
+    Executive Summary (bullets, 5–8 lines max, write it based on the "Cohort Walk-through", "Benchmark check" and "Implications & Next moves" analysis that you will do below.)
     Cohort Walk-throughs
     •	A) 12-Month Cohort (oldest with ≥12 months of follow-up)
     •	B) 6-Month Cohort (month with ≥6 months of follow-up)
@@ -1319,34 +1319,7 @@ Output structure (use these section headings)
     Implications & Next Moves (bullets)
     Keep the tone crisp and businesslike. Use only the most decision-relevant numbers. Format key callouts as bold* and multiples as ****e.g., 3.2×****. Round money to whole currency (no cents), percentages to 1 decimal, and multiples to 1 decimal unless precision is needed.*
 
-    Polished explanations (use the verbatim below)
-        Understanding and Applying LTV
-        Lifetime Value (LTV) is a core metric used to assess the long-term value of customers acquired by a business. It’s a foundational KPI for evaluating the effectiveness of marketing efforts, particularly in online retail, where LTV is often compared to Customer Acquisition Cost (CAC) to determine the ROI of advertising spend.
-        At its simplest, LTV represents the total purchases a customer makes over a defined time period. It’s critical that this timeline is explicitly stated, whether 6, 12, or 24 months, so LTV comparisons across channels, time periods, or businesses are accurate and meaningful.
-        LTV is calculated by grouping customers into cohorts and tracking their purchase behavior over time. This cohort-based approach allows for a more accurate and actionable view of how customer value evolves.
-        
-        A Common Pitfall to Avoid
-        One frequent mistake in calculating LTV is using an undifferentiated pool of customers over a fixed data range (e.g., 12 months), then summing purchases without considering when each customer entered the system. This approach is flawed because customers acquired in the later months haven’t had enough time to make repeat purchases.
-        LTV must always be tied to a **specific cohort, **a group of customers acquired at the same time, and measured over a fixed timeline. Only then can we accurately assess repeat behavior and long-term value.
-        
-        Why This Exercise Matters
-        This isn’t just about building a dashboard, it’s about uncovering insights that drive business growth. Here’s how:
-        1.	Improved Budgeting for Customer Acquisition
-        A weight loss supplement brand had a $22 average first order value (AOV) and was acquiring customers at a $2 ROAS, equivalent to $11 per customer. Initially, this looked unsustainable, with 50% of ad revenue going to acquisition. However, once they calculated the 12-month LTV, they found it reached $105. With this insight, they realized they could confidently maintain or even increase acquisition spend to accelerate growth.
-        2.	Product-Level Optimization
-        Analyzing LTV by product helps identify which SKUs drive higher retention and long-term value. This allows the brand to shift more ad budget toward high-LTV products, improving both profitability and sustainability.
-        3.	Avoiding Misguided Spend
-        If a flagship product has poor LTV, say just 1.5x its initial AOV, it may not justify additional ad investment. Instead, this insight signals a need to investigate root causes (e.g., low customer satisfaction or product ratings) before increasing spend.
-        4.	Smarter Audience Targeting via AMC
-        Using LTV-based cohorts, brands can create custom audiences within Amazon Marketing Cloud and activate them through both Sponsored and DSP campaigns, driving smarter, higher-ROI media strategies.
-        
-        Cohort Definition Methodology
-        For account-level analysis (aggregated across all products), we define a cohort as unique new-to-brand customers acquired in a specific month, who haven’t purchased from the brand in the past 12 months (assuming access to 24 months of data). Their purchasing behavior is then tracked monthly for up to 12 months to generate cohort-specific insights.
-        How to Read This Table
-        •	Active Customers: Number of unique NTB customers who purchased in that month.
-        •	Orders / Quantities / Revenue: Sales from that cohort in that month.
-        •	Retention Rate: % of the original cohort active in that month (or % of prior month - use the table’s definition; state which you see).
-        •	LTV: Cumulative revenue per original cohort customer through that month (if instead it’s total cumulative revenue, divide by the cohort size at P0).
+    # Note: Educational content about LTV has been moved to the report as a standalone section
 
     
     What to compute & how (be explicit and show the key numbers only)
@@ -1868,6 +1841,378 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     # Build PDF
     doc.build(elements)
     temp_file.close()
+    
+    return temp_file.name
+
+def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user_breakdown_df, model="gpt-4o-mini"):
+    """Generate a comprehensive LTV report in Word format with all components"""
+    
+    # Create a temporary file for the comprehensive report
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
+    temp_file.close()  # Close immediately so docx can write to it
+    
+    # Create Word document
+    doc = Document()
+    
+    # Set document margins
+    section = doc.sections[0]
+    section.top_margin = Inches(1)
+    section.bottom_margin = Inches(1)
+    section.left_margin = Inches(1)
+    section.right_margin = Inches(1)
+    
+    # Title Page
+    title = doc.add_heading('Comprehensive LTV Analysis Report', level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title.runs[0]
+    title_run.font.size = Pt(24)
+    title_run.font.name = 'Calibri'
+    
+    doc.add_paragraph()  # Add space
+    
+    # Date
+    date_para = doc.add_paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y')}")
+    date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_page_break()
+    
+    # Educational Content - Understanding LTV
+    edu_heading = doc.add_heading('Understanding and Applying LTV', level=1)
+    edu_heading.runs[0].font.size = Pt(16)
+    edu_heading.runs[0].font.name = 'Calibri'
+    
+    # LTV Introduction
+    ltv_intro = doc.add_paragraph(
+        "Lifetime Value (LTV) is a core metric used to assess the long-term value of customers acquired by a business. "
+        "It's a foundational KPI for evaluating the effectiveness of marketing efforts, particularly in online retail, "
+        "where LTV is often compared to Customer Acquisition Cost (CAC) to determine the ROI of advertising spend."
+    )
+    ltv_intro.style = 'Normal'
+    
+    ltv_definition = doc.add_paragraph(
+        "At its simplest, LTV represents the total purchases a customer makes over a defined time period. "
+        "It's critical that this timeline is explicitly stated, whether 6, 12, or 24 months, so LTV comparisons "
+        "across channels, time periods, or businesses are accurate and meaningful."
+    )
+    ltv_definition.style = 'Normal'
+    
+    ltv_calculation = doc.add_paragraph(
+        "LTV is calculated by grouping customers into cohorts and tracking their purchase behavior over time. "
+        "This cohort-based approach allows for a more accurate and actionable view of how customer value evolves."
+    )
+    ltv_calculation.style = 'Normal'
+    
+    # Common Pitfall
+    pitfall_heading = doc.add_heading('A Common Pitfall to Avoid', level=2)
+    pitfall_heading.runs[0].font.size = Pt(14)
+    pitfall_heading.runs[0].font.name = 'Calibri'
+    
+    pitfall_para = doc.add_paragraph(
+        "One frequent mistake in calculating LTV is using an undifferentiated pool of customers over a fixed data range "
+        "(e.g., 12 months), then summing purchases without considering when each customer entered the system. "
+        "This approach is flawed because customers acquired in the later months haven't had enough time to make repeat purchases."
+    )
+    pitfall_para.style = 'Normal'
+    
+    pitfall_solution = doc.add_paragraph(
+        "LTV must always be tied to a specific cohort, a group of customers acquired at the same time, "
+        "and measured over a fixed timeline. Only then can we accurately assess repeat behavior and long-term value."
+    )
+    pitfall_solution.style = 'Normal'
+    
+    # Why This Exercise Matters
+    importance_heading = doc.add_heading('Why This Exercise Matters', level=2)
+    importance_heading.runs[0].font.size = Pt(14)
+    importance_heading.runs[0].font.name = 'Calibri'
+    
+    importance_intro = doc.add_paragraph(
+        "This isn't just about building a dashboard, it's about uncovering insights that drive business growth. Here's how:"
+    )
+    importance_intro.style = 'Normal'
+    
+    # Use Cases
+    use_case1_heading = doc.add_paragraph("1. Improved Budgeting for Customer Acquisition")
+    use_case1_heading.style = 'Normal'
+    for run in use_case1_heading.runs:
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = 'Calibri'
+    
+    use_case1_content = doc.add_paragraph(
+        "A weight loss supplement brand had a $22 average first order value (AOV) and was acquiring customers at a $2 ROAS, "
+        "equivalent to $11 per customer. Initially, this looked unsustainable, with 50% of ad revenue going to acquisition. "
+        "However, once they calculated the 12-month LTV, they found it reached $105. With this insight, they realized they "
+        "could confidently maintain or even increase acquisition spend to accelerate growth."
+    )
+    use_case1_content.style = 'Normal'
+    
+    use_case2_heading = doc.add_paragraph("2. Product-Level Optimization")
+    use_case2_heading.style = 'Normal'
+    for run in use_case2_heading.runs:
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = 'Calibri'
+    
+    use_case2_content = doc.add_paragraph(
+        "Analyzing LTV by product helps identify which SKUs drive higher retention and long-term value. "
+        "This allows the brand to shift more ad budget toward high-LTV products, improving both profitability and sustainability."
+    )
+    use_case2_content.style = 'Normal'
+    
+    use_case3_heading = doc.add_paragraph("3. Avoiding Misguided Spend")
+    use_case3_heading.style = 'Normal'
+    for run in use_case3_heading.runs:
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = 'Calibri'
+    
+    use_case3_content = doc.add_paragraph(
+        "If a flagship product has poor LTV, say just 1.5x its initial AOV, it may not justify additional ad investment. "
+        "Instead, this insight signals a need to investigate root causes (e.g., low customer satisfaction or product ratings) "
+        "before increasing spend."
+    )
+    use_case3_content.style = 'Normal'
+    
+    use_case4_heading = doc.add_paragraph("4. Smarter Audience Targeting via AMC")
+    use_case4_heading.style = 'Normal'
+    for run in use_case4_heading.runs:
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.name = 'Calibri'
+    
+    use_case4_content = doc.add_paragraph(
+        "Using LTV-based cohorts, brands can create custom audiences within Amazon Marketing Cloud and activate them "
+        "through both Sponsored and DSP campaigns, driving smarter, higher-ROI media strategies."
+    )
+    use_case4_content.style = 'Normal'
+    
+    # Cohort Definition Methodology
+    methodology_heading = doc.add_heading('Cohort Definition Methodology', level=2)
+    methodology_heading.runs[0].font.size = Pt(14)
+    methodology_heading.runs[0].font.name = 'Calibri'
+    
+    methodology_content = doc.add_paragraph(
+        "For account-level analysis (aggregated across all products), we define a cohort as unique new-to-brand customers "
+        "acquired in a specific month, who haven't purchased from the brand in the past 12 months (assuming access to 24 months of data). "
+        "Their purchasing behavior is then tracked monthly for up to 12 months to generate cohort-specific insights."
+    )
+    methodology_content.style = 'Normal'
+    
+    # How to Read This Table
+    table_reading_heading = doc.add_heading('How to Read This Table', level=2)
+    table_reading_heading.runs[0].font.size = Pt(14)
+    table_reading_heading.runs[0].font.name = 'Calibri'
+    
+    # Table reading bullet points
+    table_bullets = [
+        "Active Customers: Number of unique NTB customers who purchased in that month.",
+        "Orders / Quantities / Revenue: Sales from that cohort in that month.",
+        "Retention Rate: % of the original cohort active in that month (or % of prior month - use the table's definition; state which you see).",
+        "LTV: Cumulative revenue per original cohort customer through that month (if instead it's total cumulative revenue, divide by the cohort size at P0)."
+    ]
+    
+    for bullet in table_bullets:
+        bullet_para = doc.add_paragraph(f"• {bullet}")
+        bullet_para.style = 'Normal'
+        for run in bullet_para.runs:
+            run.font.size = Pt(11)
+            run.font.name = 'Calibri'
+    
+    doc.add_page_break()
+    
+    # 1. Account-Level LTV Analysis
+    heading1 = doc.add_heading('1. Account-Level LTV Analysis', level=1)
+    heading1.runs[0].font.size = Pt(16)
+    heading1.runs[0].font.name = 'Calibri'
+    
+    if client:  # Only generate if OpenAI client is available
+        try:
+            account_analysis = generate_account_ltv_analysis(cohort_table, user_breakdown_df, model)
+            if account_analysis['analysis']:
+                analysis_para = doc.add_paragraph(account_analysis['analysis'])
+                analysis_para.style = 'Normal'
+                for run in analysis_para.runs:
+                    run.font.size = Pt(11)
+                    run.font.name = 'Calibri'
+        except Exception as e:
+            error_para = doc.add_paragraph(f"Account LTV analysis unavailable: {str(e)}")
+            error_para.style = 'Normal'
+    else:
+        placeholder_para = doc.add_paragraph("Account-level LTV analysis is available when an OpenAI API key is provided.")
+        placeholder_para.style = 'Normal'
+    
+    doc.add_page_break()
+    
+    # 2. Top 10 Products Analysis
+    heading2 = doc.add_heading('2. Top Product Performance Tables', level=1)
+    heading2.runs[0].font.size = Pt(16)
+    heading2.runs[0].font.name = 'Calibri'
+    
+    # Calculate top products data
+    top_products_data = calculate_top_products_tables(product_raw, raw_data)
+    
+    # Helper function to create tables
+    def create_word_table(doc, data, title):
+        subheading = doc.add_heading(title, level=2)
+        subheading.runs[0].font.size = Pt(14)
+        subheading.runs[0].font.name = 'Calibri'
+        
+        table = doc.add_table(rows=len(data), cols=len(data[0]))
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        # Header row
+        header_cells = table.rows[0].cells
+        for i, header in enumerate(data[0]):
+            header_cells[i].text = str(header)
+            header_cells[i].paragraphs[0].runs[0].bold = True
+            header_cells[i].paragraphs[0].runs[0].font.size = Pt(10)
+        
+        # Data rows
+        for row_idx, row_data in enumerate(data[1:], 1):
+            row_cells = table.rows[row_idx].cells
+            for col_idx, cell_data in enumerate(row_data):
+                row_cells[col_idx].text = str(cell_data)
+                row_cells[col_idx].paragraphs[0].runs[0].font.size = Pt(9)
+        
+        doc.add_paragraph()  # Add space after table
+    
+    # Top 10 by Acquired Customers
+    acquired_data = [['Rank', 'Product Title', 'Merchant SKU', 'Acquired Customers']]
+    for i, product in enumerate(top_products_data['top_acquired'], 1):
+        acquired_data.append([
+            str(i), 
+            product['Product Title'][:50] + '...' if len(product['Product Title']) > 50 else product['Product Title'], 
+            product['Merchant SKU'], 
+            str(product['Acquired Customers'])
+        ])
+    create_word_table(doc, acquired_data, '2.1 Top 10 Products by Acquired Customers')
+    
+    # Top 10 by Repeat Rate
+    repeat_data = [['Rank', 'Product Title', 'Merchant SKU', 'Repeat Rate']]
+    for i, product in enumerate(top_products_data['top_repeat'], 1):
+        repeat_data.append([
+            str(i), 
+            product['Product Title'][:50] + '...' if len(product['Product Title']) > 50 else product['Product Title'], 
+            product['Merchant SKU'], 
+            product['Repeat Rate']
+        ])
+    create_word_table(doc, repeat_data, '2.2 Top 10 Products by Repeat Rate')
+    
+    # Top 10 by AOV
+    aov_data = [['Rank', 'Product Title', 'Merchant SKU', 'AOV']]
+    for i, product in enumerate(top_products_data['top_aov'], 1):
+        aov_data.append([
+            str(i), 
+            product['Product Title'][:50] + '...' if len(product['Product Title']) > 50 else product['Product Title'], 
+            product['Merchant SKU'], 
+            product['AOV']
+        ])
+    create_word_table(doc, aov_data, '2.3 Top 10 Products by AOV')
+    
+    # Top 10 by LTV
+    ltv_data = [['Rank', 'Product Title', 'Merchant SKU', 'LTV']]
+    for i, product in enumerate(top_products_data['top_ltv'], 1):
+        ltv_data.append([
+            str(i), 
+            product['Product Title'][:50] + '...' if len(product['Product Title']) > 50 else product['Product Title'], 
+            product['Merchant SKU'], 
+            product['LTV']
+        ])
+    create_word_table(doc, ltv_data, '2.4 Top 10 Products by LTV')
+    
+    # Top Products Table Analysis
+    subheading_portfolio = doc.add_heading('2.5 Product Portfolio Analysis', level=2)
+    subheading_portfolio.runs[0].font.size = Pt(14)
+    subheading_portfolio.runs[0].font.name = 'Calibri'
+    
+    if client:
+        try:
+            tables_analysis = generate_top_products_table_explanation(top_products_data, model)
+            if tables_analysis['analysis']:
+                portfolio_para = doc.add_paragraph(tables_analysis['analysis'])
+                portfolio_para.style = 'Normal'
+                for run in portfolio_para.runs:
+                    run.font.size = Pt(11)
+                    run.font.name = 'Calibri'
+        except Exception as e:
+            error_para = doc.add_paragraph(f"Product portfolio analysis unavailable: {str(e)}")
+            error_para.style = 'Normal'
+    else:
+        placeholder_para = doc.add_paragraph("Product portfolio analysis is available when an OpenAI API key is provided.")
+        placeholder_para.style = 'Normal'
+    
+    doc.add_page_break()
+    
+    # 3. Individual Product Analysis for Top 10
+    heading3 = doc.add_heading('3. Individual Product LTV Analysis', level=1)
+    heading3.runs[0].font.size = Pt(16)
+    heading3.runs[0].font.name = 'Calibri'
+    
+    intro_para = doc.add_paragraph("Detailed analysis for each of the top 10 products by acquired customers:")
+    intro_para.style = 'Normal'
+    
+    # Get top 10 products by acquired customers for individual analysis
+    top_10_products = top_products_data['top_acquired'][:10]
+    
+    for i, product in enumerate(top_10_products, 1):
+        product_sku = product['Merchant SKU']
+        product_title = product['Product Title']
+        
+        product_heading = doc.add_heading(f'3.{i} {product_title}', level=2)
+        product_heading.runs[0].font.size = Pt(14)
+        product_heading.runs[0].font.name = 'Calibri'
+        
+        sku_para = doc.add_paragraph(f"SKU: {product_sku}")
+        sku_para.style = 'Normal'
+        
+        # Generate individual product analysis
+        if client:
+            try:
+                product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+                product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
+                
+                product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
+                if product_analysis['analysis']:
+                    analysis_para = doc.add_paragraph(product_analysis['analysis'])
+                    analysis_para.style = 'Normal'
+                    for run in analysis_para.runs:
+                        run.font.size = Pt(11)
+                        run.font.name = 'Calibri'
+            except Exception as e:
+                error_para = doc.add_paragraph(f"Analysis unavailable for {product_title}: {str(e)}")
+                error_para.style = 'Normal'
+        else:
+            placeholder_para = doc.add_paragraph("Individual product analysis is available when an OpenAI API key is provided.")
+            placeholder_para.style = 'Normal'
+        
+        if i < len(top_10_products):  # Don't add page break after last product
+            doc.add_page_break()
+    
+    # 4. User Breakdown Analysis
+    doc.add_page_break()
+    heading4 = doc.add_heading('4. User Acquisition & Retention Analysis', level=1)
+    heading4.runs[0].font.size = Pt(16)
+    heading4.runs[0].font.name = 'Calibri'
+    
+    if client and user_breakdown_df is not None:
+        try:
+            user_analysis = generate_user_breakdown_explanation(user_breakdown_df, model)
+            if user_analysis['analysis']:
+                user_para = doc.add_paragraph(user_analysis['analysis'])
+                user_para.style = 'Normal'
+                for run in user_para.runs:
+                    run.font.size = Pt(11)
+                    run.font.name = 'Calibri'
+        except Exception as e:
+            error_para = doc.add_paragraph(f"User breakdown analysis unavailable: {str(e)}")
+            error_para.style = 'Normal'
+    else:
+        placeholder_para = doc.add_paragraph("User breakdown analysis is available when an OpenAI API key is provided and user breakdown data is available.")
+        placeholder_para.style = 'Normal'
+    
+    # Save document
+    doc.save(temp_file.name)
     
     return temp_file.name
 
@@ -2567,7 +2912,7 @@ def main():
             
             with tab8:
                 st.header("📄 Comprehensive Report")
-                st.markdown("**Generate a comprehensive PDF report with cohort analysis, user breakdown tables, and AI-powered LTV insights for all top 10 products**")
+                st.markdown("**Generate comprehensive Word report with cohort analysis, user breakdown tables, and AI-powered LTV insights for all top 10 products**")
                 
                 # OpenAI Configuration Section
                 st.subheader("🤖 AI-Powered Analysis Configuration")
@@ -2609,7 +2954,7 @@ def main():
                 • **🔍 Individual Product Analysis** - Detailed LTV analysis for each of the top 10 products by acquired customers
                 • **👥 User Acquisition & Retention Analysis** - New vs returning customer patterns and business health indicators
                 • **🤖 AI-Powered Insights** - Expert recommendations and strategic guidance throughout (when API key provided)
-                • **📊 Professional Formatting** - Executive-ready report optimized for presentations and decision-making
+                • **📊 Professional Formatting** - Executive-ready report in Word format optimized for presentations and decision-making
                 """)
                 
                 # Generate comprehensive report button
@@ -2621,31 +2966,51 @@ def main():
                             account_user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, "All")
                             
                             # Generate the comprehensive PDF report
-                            pdf_path = generate_comprehensive_ltv_report(
+                            # pdf_path = generate_comprehensive_ltv_report(
+                            #     product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
+                            # )
+                            
+                            # Generate the comprehensive Word report
+                            word_path = generate_comprehensive_word_report(
                                 product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
                             )
                             
                             # Read the PDF file
-                            with open(pdf_path, "rb") as pdf_file:
-                                pdf_bytes = pdf_file.read()
+                            # with open(pdf_path, "rb") as pdf_file:
+                            #     pdf_bytes = pdf_file.read()
+                                
+                            # Read the Word file
+                            with open(word_path, "rb") as word_file:
+                                word_bytes = word_file.read()
                             
-                            # Provide download button
+                            # Provide download buttons
                             ai_status = "with AI-powered insights" if client else "with data tables only"
                             st.success(f"✅ Comprehensive LTV report generated successfully {ai_status}!")
+                            
+                            # col1, col2 = st.columns(2)
+                            # with col1:
+                            #     st.download_button(
+                            #         label="📥 Download PDF Report",
+                            #         data=pdf_bytes,
+                            #         file_name=f"Comprehensive_LTV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            #         mime="application/pdf"
+                            #     )
+                            # with col2:
                             st.download_button(
-                                label="📥 Download Comprehensive LTV Report",
-                                data=pdf_bytes,
-                                file_name=f"Comprehensive_LTV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                mime="application/pdf"
+                                label="📥 Download Word Report",
+                                data=word_bytes,
+                                file_name=f"Comprehensive_LTV_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             )
                             
-                            # Clean up temporary file
-                            os.unlink(pdf_path)
+                            # Clean up temporary files
+                            # os.unlink(pdf_path)
+                            os.unlink(word_path)
                             
                             # Show what was included
                             ai_info = "**🤖 AI Analysis:** Expert LTV insights and recommendations for each product" if client else "**📊 Analysis:** Placeholder sections for AI insights (API key required)"
                             st.info(f"""
-                            **Report Generated:** Top 10 Products Analysis Report  
+                            **Report Generated:** Top 10 Products Analysis (Word format)  
                             **Products Included:** Top 10 products by acquired customers  
                             **Content:** AI-powered strategic insights with data file references  
                             {ai_info}  
@@ -2660,7 +3025,7 @@ def main():
                 # Add download section for individual product data files
                 st.markdown("---")
                 st.subheader("📊 Download Individual Product Data Files")
-                st.markdown("**Get detailed data files for each of the top 10 products (referenced in the PDF report)**")
+                st.markdown("**Get detailed data files for each of the top 10 products (referenced in the Word report)**")
                 
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -2670,7 +3035,7 @@ def main():
                     • **User Breakdown** - New vs returning customer analysis for each product  
                     • **Product LTV Data** - Detailed LTV metrics and calculations for each product
                     
-                    These are the same data files referenced in your PDF report for detailed analysis.
+                    These are the same data files referenced in your Word report for detailed analysis.
                     """)
                 
                 with col2:
@@ -2692,7 +3057,7 @@ def main():
                                 st.info("""
                                 **Generated Files:** Individual CSV files for each of the top 10 products  
                                 **File Naming:** `[SKU]_[DataType].csv` (e.g., `ABC123_Cohort_Analysis.csv`)  
-                                **Contents:** Detailed data tables referenced in your PDF report
+                                **Contents:** Detailed data tables referenced in your Word report
                                 """)
                                 
                         except Exception as e:
