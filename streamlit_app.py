@@ -40,16 +40,72 @@ def call_chat(system_prompt, prompt, model):
         st.error("OpenAI client not initialized. Please provide an API key.")
         return None, 0, 0
     
+    print(f"🔍 DEBUG: ===== CALL_CHAT FUNCTION CALLED =====")
+    print(f"🔍 DEBUG: Model: {model}")
+    print(f"🔍 DEBUG: System prompt length: {len(system_prompt) if system_prompt else 0}")
+    print(f"🔍 DEBUG: User prompt length: {len(prompt) if prompt else 0}")
+    
+    # Check for problematic characters before cleaning
+    if system_prompt and '\u202f' in system_prompt:
+        print(f"🔍 DEBUG: \\u202f found in ORIGINAL system prompt!")
+        pos = system_prompt.find('\u202f')
+        print(f"🔍 DEBUG: Position in system prompt: {pos}")
+        print(f"🔍 DEBUG: Context: {repr(system_prompt[max(0, pos-20):pos+20])}")
+    
+    if prompt and '\u202f' in prompt:
+        print(f"🔍 DEBUG: \\u202f found in ORIGINAL user prompt!")
+        pos = prompt.find('\u202f')
+        print(f"🔍 DEBUG: Position in user prompt: {pos}")
+        print(f"🔍 DEBUG: Context: {repr(prompt[max(0, pos-20):pos+20])}")
+    
     try:
+        # Clean prompts to ensure safe encoding using comprehensive Unicode cleaning
+        print(f"🔍 DEBUG: Cleaning system prompt...")
+        clean_system_prompt = clean_unicode_text(system_prompt)
+        print(f"🔍 DEBUG: Cleaning user prompt...")
+        clean_user_prompt = clean_unicode_text(prompt)
+        
+        print(f"🔍 DEBUG: Cleaned system prompt length: {len(clean_system_prompt)}")
+        print(f"🔍 DEBUG: Cleaned user prompt length: {len(clean_user_prompt)}")
+        
+        # Additional safety check - try to encode as ASCII to catch any remaining issues
+        try:
+            print(f"🔍 DEBUG: Testing ASCII encoding of cleaned prompts...")
+            clean_system_prompt.encode('ascii')
+            clean_user_prompt.encode('ascii')
+            print(f"🔍 DEBUG: ASCII encoding test PASSED")
+        except UnicodeEncodeError as unicode_error:
+            print(f"🔍 DEBUG: ASCII encoding test FAILED: {unicode_error}")
+            print(f"🔍 DEBUG: Error in: {'system' if 'system' in str(unicode_error.object) else 'user'} prompt")
+            print(f"🔍 DEBUG: Problematic character at position {unicode_error.start}: {repr(unicode_error.object[unicode_error.start:unicode_error.end])}")
+            print(f"🔍 DEBUG: Context around error: {repr(unicode_error.object[max(0, unicode_error.start-10):unicode_error.end+10])}")
+            # Apply even more aggressive cleaning
+            clean_system_prompt = ''.join(char for char in clean_system_prompt if ord(char) < 128)
+            clean_user_prompt = ''.join(char for char in clean_user_prompt if ord(char) < 128)
+            print(f"🔍 DEBUG: Applied brute force cleaning to both prompts")
+        
+        print(f"🔍 DEBUG: About to call OpenAI API...")
         res = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": clean_system_prompt},
+                {"role": "user", "content": clean_user_prompt},
             ]
         )
+        print(f"🔍 DEBUG: OpenAI API call successful!")
         return res.choices[0].message.content
     except Exception as e:
+        print(f"🔍 DEBUG: ===== EXCEPTION IN CALL_CHAT =====")
+        print(f"🔍 DEBUG: Exception type: {type(e)}")
+        print(f"🔍 DEBUG: Exception message: {str(e)}")
+        print(f"🔍 DEBUG: Exception repr: {repr(e)}")
+        
+        # Try to identify which prompt has the issue
+        if 'ascii' in str(e).lower() and 'encode' in str(e).lower():
+            print(f"🔍 DEBUG: This is definitely a Unicode encoding error")
+            if hasattr(e, 'object'):
+                print(f"🔍 DEBUG: Error object: {repr(e.object[:100])}")
+        
         st.error(f"Error calling OpenAI API: {str(e)}")
         return None
 
@@ -1105,8 +1161,153 @@ def calculate_top_products_tables(product_raw, raw_data):
         'top_ltv': top_ltv
     }
 
+def clean_api_key(api_key):
+    """Extract and clean OpenAI API key from chat messages or formatted text"""
+    if not api_key:
+        return ""
+    
+    import re
+    
+    print(f"🔍 DEBUG: ===== CLEANING API KEY =====")
+    print(f"🔍 DEBUG: Original API key (first 50 chars): {repr(api_key[:50])}")
+    
+    # Check for problematic Unicode characters
+    if '\u202f' in api_key:
+        print(f"🔍 DEBUG: Found \\u202f in API key!")
+        pos = api_key.find('\u202f')
+        print(f"🔍 DEBUG: Position: {pos}")
+        print(f"🔍 DEBUG: Context: {repr(api_key[max(0, pos-20):pos+20])}")
+    
+    # First, apply general Unicode cleaning
+    cleaned = clean_unicode_text(api_key)
+    
+    # Extract OpenAI API keys using regex patterns
+    # Look for patterns like sk-proj-... or sk-...
+    api_key_patterns = [
+        r'sk-proj-[A-Za-z0-9_-]+',  # Project API keys
+        r'sk-[A-Za-z0-9_-]+',       # Regular API keys
+    ]
+    
+    for pattern in api_key_patterns:
+        matches = re.findall(pattern, cleaned)
+        if matches:
+            # Use the last/longest match found
+            extracted_key = max(matches, key=len)
+            print(f"🔍 DEBUG: Extracted API key using pattern {pattern}")
+            print(f"🔍 DEBUG: Extracted key starts with: {extracted_key[:10]}...")
+            print(f"🔍 DEBUG: Extracted key length: {len(extracted_key)}")
+            return extracted_key
+    
+    # If no pattern matches, fall back to cleaned text
+    print(f"🔍 DEBUG: No API key pattern found, using cleaned text")
+    print(f"🔍 DEBUG: Cleaned text starts with: {cleaned[:20]}...")
+    
+    return cleaned
+
+def clean_unicode_text(text):
+    """Comprehensive Unicode text cleaning for safe API transmission"""
+    if not text:
+        return ""
+    
+    import re
+    
+    # Convert to string if not already
+    original_text = str(text)
+    text = original_text
+    
+    # Debug: Check for problematic characters in input
+    if '\u202f' in text:
+        print(f"🔍 DEBUG: Found \\u202f in input text: {repr(text[:100])}")
+        # Find position of the character
+        pos = text.find('\u202f')
+        print(f"🔍 DEBUG: \\u202f found at position {pos}")
+        print(f"🔍 DEBUG: Context around position: {repr(text[max(0, pos-10):pos+10])}")
+    
+    # Remove or replace problematic Unicode characters
+    # Narrow no-break space and related characters
+    text = re.sub(r'[\u00a0\u1680\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\ufeff]', ' ', text)
+    
+    # Remove other invisible/control characters
+    text = re.sub(r'[\u0000-\u001f\u007f-\u009f]', '', text)
+    
+    # Replace smart quotes and dashes with ASCII equivalents
+    text = text.replace('\u2018', "'")  # Left single quotation mark
+    text = text.replace('\u2019', "'")  # Right single quotation mark
+    text = text.replace('\u201c', '"')  # Left double quotation mark
+    text = text.replace('\u201d', '"')  # Right double quotation mark
+    text = text.replace('\u2013', '-')  # En dash
+    text = text.replace('\u2014', '-')  # Em dash
+    text = text.replace('\u2026', '...')  # Horizontal ellipsis
+    
+    # Remove any remaining non-ASCII characters
+    text = re.sub(r'[^\x00-\x7F]+', '', text)
+    
+    # Final safety check - brute force ASCII-only approach
+    try:
+        text.encode('ascii')
+    except UnicodeEncodeError as e:
+        print(f"🔍 DEBUG: Unicode error STILL present after cleaning: {e}")
+        print(f"🔍 DEBUG: Problematic text after cleaning: {repr(text[max(0, e.start-10):e.end+10])}")
+        # If still problematic, use brute force approach
+        text = ''.join(char for char in text if ord(char) < 128)
+        print(f"🔍 DEBUG: Applied brute force cleaning")
+    
+    # Clean up excessive whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    final_text = text.strip()
+    
+    # Debug final check
+    if '\u202f' in final_text:
+        print(f"🔍 DEBUG: ERROR - \\u202f STILL present in final text!")
+    
+    return final_text
+
+def safe_dataframe_to_string(df, index=True):
+    """Safely convert DataFrame to string, removing problematic Unicode characters"""
+    if df is None or df.empty:
+        return "No data available"
+    
+    print(f"🔍 DEBUG: ===== SAFE_DATAFRAME_TO_STRING =====")
+    print(f"🔍 DEBUG: DataFrame shape: {df.shape}")
+    print(f"🔍 DEBUG: DataFrame columns: {list(df.columns)}")
+    
+    # Check for Unicode in DataFrame before conversion
+    for col in df.columns:
+        if df[col].dtype == 'object':  # Check text columns
+            for idx, value in df[col].items():
+                if value and '\u202f' in str(value):
+                    print(f"🔍 DEBUG: \\u202f found in DataFrame column '{col}', row {idx}: {repr(value)}")
+    
+    # Convert DataFrame to string
+    df_string = df.to_string(index=index)
+    
+    print(f"🔍 DEBUG: DataFrame string length: {len(df_string)}")
+    if '\u202f' in df_string:
+        print(f"🔍 DEBUG: \\u202f found in DataFrame string after to_string()!")
+        pos = df_string.find('\u202f')
+        print(f"🔍 DEBUG: Position: {pos}")
+        print(f"🔍 DEBUG: Context: {repr(df_string[max(0, pos-20):pos+20])}")
+    
+    # Apply comprehensive Unicode cleaning
+    cleaned_string = clean_unicode_text(df_string)
+    print(f"🔍 DEBUG: Cleaned string length: {len(cleaned_string)}")
+    
+    return cleaned_string
+
 def generate_product_ltv_analysis(product_sku, product_title, cohort_data, user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM analysis for a specific product's LTV data"""
+    
+    print(f"🔍 DEBUG: ===== GENERATE_PRODUCT_LTV_ANALYSIS =====")
+    print(f"🔍 DEBUG: Product SKU: {repr(product_sku)}")
+    print(f"🔍 DEBUG: Product Title: {repr(product_title)}")
+    print(f"🔍 DEBUG: Cohort data shape: {cohort_data.shape if cohort_data is not None else 'None'}")
+    
+    # Check for Unicode in input parameters
+    if product_sku and '\u202f' in str(product_sku):
+        print(f"🔍 DEBUG: \\u202f found in product_sku!")
+    if product_title and '\u202f' in str(product_title):
+        print(f"🔍 DEBUG: \\u202f found in product_title!")
     
     # System prompt with the theory and instructions
     system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
@@ -1187,18 +1388,36 @@ Output structure (use these section headings)
 """
 
     # Create user prompt with the actual data
+    print(f"🔍 DEBUG: About to create user prompt...")
+    
+    cleaned_title = clean_unicode_text(product_title)
+    cleaned_sku = clean_unicode_text(product_sku)
+    cohort_string = safe_dataframe_to_string(cohort_data)
+    
+    print(f"🔍 DEBUG: Cleaned title: {repr(cleaned_title)}")
+    print(f"🔍 DEBUG: Cleaned SKU: {repr(cleaned_sku)}")
+    print(f"🔍 DEBUG: Cohort string length: {len(cohort_string)}")
+    
     user_prompt = f"""Analyze the LTV performance for this product:
 
-PRODUCT: {product_title}
-SKU: {product_sku}
+PRODUCT: {cleaned_title}
+SKU: {cleaned_sku}
 
 COHORT ANALYSIS DATA:
-{cohort_data.to_string()}
+{cohort_string}
 
 Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations."""
 
+    print(f"🔍 DEBUG: Created user prompt, length: {len(user_prompt)}")
+    if '\u202f' in user_prompt:
+        print(f"🔍 DEBUG: \\u202f found in FINAL user prompt!")
+        pos = user_prompt.find('\u202f')
+        print(f"🔍 DEBUG: Position: {pos}")
+        print(f"🔍 DEBUG: Context: {repr(user_prompt[max(0, pos-20):pos+20])}")
+
     # Call the LLM
-    analysis = call_chat(system_prompt, user_prompt, model)
+    print(f"🔍 DEBUG: About to call LLM for product analysis...")
+    analysis = call_chat(clean_unicode_text(system_prompt), user_prompt, model)
     
     return {
         'analysis': analysis
@@ -1206,6 +1425,9 @@ Focus on actionable insights with clear formatting, bullet points, and professio
 
 def generate_top_products_table_explanation(top_products_data, model="gpt-4o-mini"):
     """Generate LLM explanation for the top 10 products tables"""
+    
+    print(f"🔍 DEBUG: ===== GENERATE_TOP_PRODUCTS_TABLE_EXPLANATION =====")
+    print(f"🔍 DEBUG: Top products data keys: {list(top_products_data.keys())}")
     
     system_prompt = """You are an experienced e-commerce analyst. Analyze the top 10 product performance tables and provide clear, actionable insights.
 
@@ -1240,24 +1462,27 @@ Keep the analysis concise, executive-ready, and focused on actionable insights. 
     user_prompt = f"""Analyze these four top 10 product performance tables:
 
 TOP 10 PRODUCTS BY ACQUIRED CUSTOMERS:
-{acquired_table.to_string(index=False)}
+{safe_dataframe_to_string(acquired_table, index=False)}
 
 TOP 10 PRODUCTS BY REPEAT RATE:
-{repeat_table.to_string(index=False)}
+{safe_dataframe_to_string(repeat_table, index=False)}
 
 TOP 10 PRODUCTS BY AOV:
-{aov_table.to_string(index=False)}
+{safe_dataframe_to_string(aov_table, index=False)}
 
 TOP 10 PRODUCTS BY LTV:
-{ltv_table.to_string(index=False)}
+{safe_dataframe_to_string(ltv_table, index=False)}
 
 Provide strategic insights and recommendations based on these rankings."""
 
-    analysis = call_chat(system_prompt, user_prompt, model)
+    analysis = call_chat(clean_unicode_text(system_prompt), user_prompt, model)
     return {'analysis': analysis}
 
 def generate_user_breakdown_explanation(user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM explanation for user breakdown analysis"""
+    
+    print(f"🔍 DEBUG: ===== GENERATE_USER_BREAKDOWN_EXPLANATION =====")
+    print(f"🔍 DEBUG: User breakdown data shape: {user_breakdown_data.shape if user_breakdown_data is not None else 'None'}")
     
     system_prompt = """You are an experienced customer analytics specialist. Analyze the new vs old user breakdown data and provide clear insights about customer acquisition and retention patterns.
 
@@ -1286,15 +1511,19 @@ Keep the analysis concise, data-driven, and focused on actionable business insig
     user_prompt = f"""Analyze this user breakdown data showing new vs old users over time:
 
 USER BREAKDOWN DATA:
-{user_breakdown_data.to_string(index=False)}
+{safe_dataframe_to_string(user_breakdown_data, index=False)}
 
 Provide insights about customer acquisition patterns, retention trends, and business health indicators based on this data."""
 
-    analysis = call_chat(system_prompt, user_prompt, model)
+    analysis = call_chat(clean_unicode_text(system_prompt), user_prompt, model)
     return {'analysis': analysis}
 
 def generate_account_ltv_analysis(cohort_data, user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM analysis for account-level LTV data"""
+    
+    print(f"🔍 DEBUG: ===== GENERATE_ACCOUNT_LTV_ANALYSIS =====")
+    print(f"🔍 DEBUG: Cohort data shape: {cohort_data.shape if cohort_data is not None else 'None'}")
+    print(f"🔍 DEBUG: User breakdown data shape: {user_breakdown_data.shape if user_breakdown_data is not None else 'None'}")
     
     # System prompt with the theory and instructions
     system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
@@ -1412,12 +1641,12 @@ Output structure (use these section headings)
 SCOPE: Account-Level Analysis
 
 COHORT ANALYSIS DATA:
-{cohort_data.to_string()}
+{safe_dataframe_to_string(cohort_data)}
 
 Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations. Pay special attention to the Cumulative LTV and LTV Ratio metrics to understand how customer value compounds over time."""
 
     # Call the LLM
-    analysis = call_chat(system_prompt, user_prompt, model)
+    analysis = call_chat(clean_unicode_text(system_prompt), user_prompt, model)
     
     return {
         'analysis': analysis
@@ -1470,6 +1699,15 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     Returns:
         plotly.graph_objects.Figure: Plotly figure object
     """
+    
+    # Test kaleido availability for image export
+    try:
+        import kaleido
+        print(f"🔍 DEBUG: Kaleido available - version: {getattr(kaleido, '__version__', 'unknown')}")
+    except ImportError as e:
+        print(f"🔍 DEBUG: Kaleido not available: {e}")
+    except Exception as e:
+        print(f"🔍 DEBUG: Kaleido import error: {e}")
     
     # Create stacked bar chart
     fig = go.Figure()
@@ -1548,19 +1786,24 @@ def clean_text_for_pdf(text):
     
     import re
     
-    # Convert markdown headers to HTML headers
+    # Convert markdown headers to HTML headers (order matters - start with most specific)
+    text = re.sub(r'^#### (.*?)$', r'<br/><b><u>\1</u></b><br/>', text, flags=re.MULTILINE)
     text = re.sub(r'^### (.*?)$', r'<br/><b><u>\1</u></b><br/>', text, flags=re.MULTILINE)
     text = re.sub(r'^## (.*?)$', r'<br/><br/><b><font size="14">\1</font></b><br/>', text, flags=re.MULTILINE)
     text = re.sub(r'^# (.*?)$', r'<br/><br/><b><font size="16">\1</font></b><br/><br/>', text, flags=re.MULTILINE)
     
-    # Convert markdown-style bold to HTML bold
+    # Convert markdown-style bold to HTML bold (be more specific to avoid conflicts)
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
     
-    # Convert markdown-style italic to HTML italic
-    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+    # Convert markdown-style italic to HTML italic (avoid conflicts with bold)
+    text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i>\1</i>', text)
+    
+    # Handle markdown lists
+    text = re.sub(r'^[-*+] (.*?)$', r'- \1', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\. (.*?)$', r'• \1', text, flags=re.MULTILINE)
     
     # Replace bullet points with simple dashes
-    text = text.replace('•', '-').replace('◦', '-').replace('—', '-')
+    text = text.replace('•', '- ').replace('◦', '- ').replace('—', '- ')
     
     # Remove emojis and special unicode characters that might cause issues
     text = re.sub(r'[^\x00-\x7F]+', '', text)
@@ -1568,6 +1811,14 @@ def clean_text_for_pdf(text):
     # Clean up any remaining problematic characters
     text = text.replace('\\', '')
     text = text.replace('"', "'")
+    text = text.replace('`', "'")  # Remove backticks
+    
+    # Handle code blocks and inline code
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)  # Remove code blocks
+    text = re.sub(r'`([^`]+)`', r'\1', text)  # Remove inline code formatting
+    
+    # Clean up horizontal rules
+    text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
     
     # Ensure proper line breaks
     text = text.replace('\n\n', '<br/><br/>').replace('\n', '<br/>')
@@ -1575,6 +1826,55 @@ def clean_text_for_pdf(text):
     # Remove any nested paragraph tags that might cause issues
     text = re.sub(r'<para.*?>', '', text)
     text = text.replace('</para>', '')
+    
+    # Clean up multiple consecutive break tags
+    text = re.sub(r'(<br/>){3,}', '<br/><br/>', text)
+    
+    return text
+
+def clean_text_for_word(text):
+    """Clean text to make it properly formatted for Word documents"""
+    if not text:
+        return ""
+    
+    import re
+    
+    # Remove markdown headers and replace with plain text (order matters - most specific first)
+    text = re.sub(r'^#### (.*?)$', r'\n\1\n', text, flags=re.MULTILINE)
+    text = re.sub(r'^### (.*?)$', r'\n\1\n', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.*?)$', r'\n\1\n', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.*?)$', r'\n\1\n\n', text, flags=re.MULTILINE)
+    
+    # Convert markdown-style bold to plain text (remove ** markers)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    
+    # Convert markdown-style italic to plain text (remove * markers, avoid conflicts with bold)
+    text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'\1', text)
+    
+    # Handle markdown lists
+    text = re.sub(r'^[-*+] (.*?)$', r'- \1', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\. (.*?)$', r'- \1', text, flags=re.MULTILINE)
+    
+    # Remove code blocks and inline code
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)  # Remove code blocks
+    text = re.sub(r'`([^`]+)`', r'\1', text)  # Remove inline code formatting
+    
+    # Clean up horizontal rules
+    text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
+    
+    # Clean up bullet points
+    text = text.replace('•', '- ').replace('◦', '- ').replace('—', '- ')
+    
+    # Remove emojis and special unicode characters that might cause issues
+    text = re.sub(r'[^\x00-\x7F]+', '', text)
+    
+    # Clean up any remaining problematic characters
+    text = text.replace('\\', '')
+    text = text.replace('`', '')  # Remove remaining backticks
+    
+    # Clean up extra whitespace and line breaks
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)  # Replace multiple line breaks with double
+    text = re.sub(r'^\s+|\s+$', '', text)  # Trim whitespace from start/end
     
     return text
 
@@ -1720,9 +2020,12 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     # Top 10 by Acquired Customers
     elements.append(Paragraph("2.1 Top 10 Products by Acquired Customers", subheading_style))
     acquired_data = [['Rank', 'Product Title', 'Merchant SKU', 'Acquired Customers']]
-    for i, product in enumerate(top_products_data['top_acquired'], 1):
-        acquired_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
-                             product['Merchant SKU'], str(product['Acquired Customers'])])
+    if top_products_data.get('top_acquired'):
+        for i, product in enumerate(top_products_data['top_acquired'], 1):
+            acquired_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                                 product['Merchant SKU'], str(product['Acquired Customers'])])
+    else:
+        acquired_data.append(['N/A', 'No data available', 'N/A', '0'])
     
     acquired_table = Table(acquired_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
     acquired_table.setStyle(table_style)
@@ -1732,9 +2035,12 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     # Top 10 by Repeat Rate
     elements.append(Paragraph("2.2 Top 10 Products by Repeat Rate", subheading_style))
     repeat_data = [['Rank', 'Product Title', 'Merchant SKU', 'Repeat Rate']]
-    for i, product in enumerate(top_products_data['top_repeat'], 1):
-        repeat_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
-                           product['Merchant SKU'], product['Repeat Rate']])
+    if top_products_data.get('top_repeat'):
+        for i, product in enumerate(top_products_data['top_repeat'], 1):
+            repeat_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                               product['Merchant SKU'], product['Repeat Rate']])
+    else:
+        repeat_data.append(['N/A', 'No data available', 'N/A', '0%'])
     
     repeat_table = Table(repeat_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
     repeat_table.setStyle(table_style)
@@ -1744,9 +2050,12 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     # Top 10 by AOV
     elements.append(Paragraph("2.3 Top 10 Products by AOV", subheading_style))
     aov_data = [['Rank', 'Product Title', 'Merchant SKU', 'AOV']]
-    for i, product in enumerate(top_products_data['top_aov'], 1):
-        aov_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
-                        product['Merchant SKU'], product['AOV']])
+    if top_products_data.get('top_aov'):
+        for i, product in enumerate(top_products_data['top_aov'], 1):
+            aov_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                            product['Merchant SKU'], product['AOV']])
+    else:
+        aov_data.append(['N/A', 'No data available', 'N/A', '$0.00'])
     
     aov_table = Table(aov_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
     aov_table.setStyle(table_style)
@@ -1756,9 +2065,12 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     # Top 10 by LTV
     elements.append(Paragraph("2.4 Top 10 Products by LTV", subheading_style))
     ltv_data = [['Rank', 'Product Title', 'Merchant SKU', 'LTV']]
-    for i, product in enumerate(top_products_data['top_ltv'], 1):
-        ltv_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
-                        product['Merchant SKU'], product['LTV']])
+    if top_products_data.get('top_ltv'):
+        for i, product in enumerate(top_products_data['top_ltv'], 1):
+            ltv_data.append([str(i), product['Product Title'][:40] + '...' if len(product['Product Title']) > 40 else product['Product Title'], 
+                            product['Merchant SKU'], product['LTV']])
+    else:
+        ltv_data.append(['N/A', 'No data available', 'N/A', '$0.00'])
     
     ltv_table = Table(ltv_data, colWidths=[0.8*inch, 3*inch, 1.5*inch, 1.2*inch])
     ltv_table.setStyle(table_style)
@@ -1789,53 +2101,198 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
     elements.append(Spacer(1, 15))
     
     # Get top 10 products by acquired customers for individual analysis
-    top_10_products = top_products_data['top_acquired'][:10]
+    top_10_products = top_products_data['top_acquired'][:10] if top_products_data.get('top_acquired') else []
     
-    for i, product in enumerate(top_10_products, 1):
-        product_sku = product['Merchant SKU']
-        product_title = product['Product Title']
-        
-        elements.append(Paragraph(f"3.{i} {product_title}", subheading_style))
-        elements.append(Paragraph(f"SKU: {product_sku}", styles['Normal']))
-        elements.append(Spacer(1, 10))
-        
-        # Generate individual product analysis
-        if client:
-            try:
-                product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
-                product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
-                
-                product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
-                if product_analysis['analysis']:
-                    analysis_text = clean_text_for_pdf(product_analysis['analysis'])
-                    elements.append(Paragraph(analysis_text, analysis_style))
-                    elements.append(Spacer(1, 15))
-            except Exception as e:
-                elements.append(Paragraph(f"Analysis unavailable for {product_title}: {str(e)}", analysis_style))
-                elements.append(Spacer(1, 10))
-        else:
-            elements.append(Paragraph("Individual product analysis is available when an OpenAI API key is provided.", analysis_style))
-            elements.append(Spacer(1, 15))
-        
-        if i < len(top_10_products):  # Don't add page break after last product
-            elements.append(PageBreak())
+    if not top_10_products:
+        elements.append(Paragraph("No products found for individual analysis.", styles['Normal']))
+        elements.append(Spacer(1, 15))
+    else:
+        for i, product in enumerate(top_10_products, 1):
+            product_sku = product['Merchant SKU']
+            product_title = product['Product Title']
+            
+            elements.append(Paragraph(f"3.{i} {product_title}", subheading_style))
+            elements.append(Paragraph(f"SKU: {product_sku}", styles['Normal']))
+            elements.append(Spacer(1, 10))
+            
+            # Generate individual product analysis
+            if client:
+                try:
+                    product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+                    product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
+                    
+                    product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
+                    if product_analysis['analysis']:
+                        analysis_text = clean_text_for_pdf(product_analysis['analysis'])
+                        elements.append(Paragraph(analysis_text, analysis_style))
+                        elements.append(Spacer(1, 15))
+                except Exception as e:
+                    elements.append(Paragraph(f"Analysis unavailable for {product_title}: {str(e)}", analysis_style))
+                    elements.append(Spacer(1, 10))
+            else:
+                elements.append(Paragraph("Individual product analysis is available when an OpenAI API key is provided.", analysis_style))
+                elements.append(Spacer(1, 15))
+            
+            if i < len(top_10_products):  # Don't add page break after last product
+                elements.append(PageBreak())
     
     # 4. User Breakdown Analysis
     elements.append(PageBreak())
     elements.append(Paragraph("4. User Acquisition & Retention Analysis", heading_style))
     
+    if user_breakdown_df is not None and not user_breakdown_df.empty:
+        # Add key metrics summary
+        elements.append(Paragraph("4.1 Key Metrics Summary", subheading_style))
+        
+        total_new_users = user_breakdown_df['new_users'].sum()
+        total_returning_users = user_breakdown_df['old_users'].sum()
+        total_all_users = user_breakdown_df['all_users'].sum()
+        # new_user_percentage = (total_new_users / total_all_users) * 100 if total_all_users > 0 else 0
+        # avg_new_users_per_month = user_breakdown_df['new_users'].mean()
+        # avg_returning_users_per_month = user_breakdown_df['old_users'].mean()
+        
+        metrics_data = [
+            ['Metric', 'Value'],
+            ['Total New Users', f"{total_new_users:,}"],
+            ['Total Returning Users', f"{total_returning_users:,}"],
+            ['Total Users', f"{total_all_users:,}"],
+            # ['New User Percentage', f"{new_user_percentage:.1f}%"],
+            # ['Avg New Users/Month', f"{avg_new_users_per_month:.0f}"],
+            # ['Avg Returning Users/Month', f"{avg_returning_users_per_month:.0f}"]
+        ]
+        
+        metrics_table = Table(metrics_data, colWidths=[3*inch, 2*inch])
+        metrics_table.setStyle(table_style)
+        elements.append(metrics_table)
+        elements.append(Spacer(1, 20))
+        
+        # Add user breakdown chart
+        elements.append(Paragraph("4.2 User Breakdown Visualization", subheading_style))
+        try:
+            # Create the chart
+            fig = create_user_breakdown_chart(user_breakdown_df, "All")
+            
+            # Save chart as image and add to PDF
+            import tempfile
+            chart_temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            
+            try:
+                # Try to save as image using kaleido
+                print(f"🔍 DEBUG: Attempting to export chart to {chart_temp_file.name}")
+                fig.write_image(chart_temp_file.name, format='png', width=800, height=500, scale=2)
+                print(f"🔍 DEBUG: Chart export successful!")
+                
+                from reportlab.platypus import Image
+                chart_image = Image(chart_temp_file.name, width=6*inch, height=3.75*inch)
+                elements.append(chart_image)
+                elements.append(Spacer(1, 20))
+                print(f"🔍 DEBUG: Chart added to PDF successfully!")
+                
+            except Exception as e:
+                print(f"🔍 DEBUG: Chart export error: {str(e)}")
+                print(f"🔍 DEBUG: Error type: {type(e)}")
+                
+                # Check if it's a kaleido-specific error
+                if 'kaleido' in str(e).lower():
+                    error_msg = f"Chart generation unavailable: Kaleido package error - {str(e)}"
+                else:
+                    error_msg = f"Chart generation unavailable: {str(e)}"
+                
+                elements.append(Paragraph(error_msg, analysis_style))
+                elements.append(Paragraph("Please ensure kaleido is installed: pip install --upgrade kaleido", analysis_style))
+                elements.append(Spacer(1, 15))
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(chart_temp_file.name)
+                except:
+                    pass
+                    
+        except Exception as e:
+            elements.append(Paragraph(f"Chart generation error: {str(e)}", analysis_style))
+            elements.append(Spacer(1, 15))
+        
+        # Add user breakdown data table
+        elements.append(Paragraph("4.3 Detailed User Breakdown Data", subheading_style))
+        
+        # Prepare table data
+        table_data = [['Month', 'Total Users', 'New Users', 'Returning Users', 'New User %', 'Returning User %']]
+        
+        for _, row in user_breakdown_df.iterrows():
+            month_str = row['month'].strftime('%Y-%m-%d') if hasattr(row['month'], 'strftime') else str(row['month'])
+            total_users = int(row['all_users'])
+            new_users = int(row['new_users'])
+            returning_users = int(row['old_users'])
+            new_pct = (new_users / total_users * 100) if total_users > 0 else 0
+            returning_pct = (returning_users / total_users * 100) if total_users > 0 else 0
+            
+            table_data.append([
+                month_str,
+                f"{total_users:,}",
+                f"{new_users:,}",
+                f"{returning_users:,}",
+                f"{new_pct:.1f}%",
+                f"{returning_pct:.1f}%"
+            ])
+        
+        # Create table with appropriate column widths
+        breakdown_table = Table(table_data, colWidths=[1.2*inch, 1*inch, 1*inch, 1.2*inch, 0.8*inch, 1*inch])
+        breakdown_table.setStyle(table_style)
+        elements.append(breakdown_table)
+        elements.append(Spacer(1, 20))
+        
+        # Analysis insights
+        if len(user_breakdown_df) >= 2:
+            elements.append(Paragraph("4.4 Analysis Insights", subheading_style))
+            
+            recent_new_users = user_breakdown_df.tail(3)['new_users'].mean()
+            if len(user_breakdown_df) > 3:
+                earlier_new_users = user_breakdown_df.head(len(user_breakdown_df)-3)['new_users'].mean()
+            else:
+                # Safety check: make sure we have at least 1 row
+                if len(user_breakdown_df) >= 1:
+                    earlier_new_users = user_breakdown_df.head(1)['new_users'].iloc[0]
+                else:
+                    earlier_new_users = 0
+            
+            total_months = len(user_breakdown_df)
+            months_with_growth = len(user_breakdown_df[user_breakdown_df['new_users'] > user_breakdown_df['old_users']])
+            if len(user_breakdown_df) > 0:
+                best_month = user_breakdown_df.loc[user_breakdown_df['new_users'].idxmax()]
+            else:
+                best_month = {'month': 'N/A', 'new_users': 0}
+            
+            insights_text = f"""
+            • Analysis covers {total_months} months of user acquisition data
+            • {months_with_growth} out of {total_months} months showed more new users than returning users
+            • Best acquisition month: {best_month['month'].strftime('%Y-%m') if hasattr(best_month['month'], 'strftime') else str(best_month['month'])} with {best_month['new_users']:.0f} new users
+            """
+            
+            if earlier_new_users > 0:
+                new_user_trend = ((recent_new_users - earlier_new_users) / earlier_new_users) * 100
+                trend_direction = "increasing" if new_user_trend > 5 else "decreasing" if new_user_trend < -5 else "stable"
+                insights_text += f"• New user acquisition trend: {trend_direction} ({new_user_trend:+.1f}%)"
+            
+            elements.append(Paragraph(insights_text, analysis_style))
+            elements.append(Spacer(1, 20))
+    
+    # AI-generated analysis (if available)
     if client and user_breakdown_df is not None:
         try:
+            elements.append(Paragraph("4.5 AI-Generated Analysis", subheading_style))
             user_analysis = generate_user_breakdown_explanation(user_breakdown_df, model)
             if user_analysis['analysis']:
                 analysis_text = clean_text_for_pdf(user_analysis['analysis'])
                 elements.append(Paragraph(analysis_text, analysis_style))
                 elements.append(Spacer(1, 20))
         except Exception as e:
-            elements.append(Paragraph(f"User breakdown analysis unavailable: {str(e)}", analysis_style))
+            elements.append(Paragraph(f"AI user breakdown analysis unavailable: {str(e)}", analysis_style))
             elements.append(Spacer(1, 15))
+    elif user_breakdown_df is None or user_breakdown_df.empty:
+        elements.append(Paragraph("User breakdown analysis is unavailable - no user breakdown data provided.", analysis_style))
+        elements.append(Spacer(1, 20))
     else:
-        elements.append(Paragraph("User breakdown analysis is available when an OpenAI API key is provided and user breakdown data is available.", analysis_style))
+        elements.append(Paragraph("AI-generated user breakdown analysis is available when an OpenAI API key is provided.", analysis_style))
         elements.append(Spacer(1, 20))
     
     # Build PDF
@@ -2029,7 +2486,8 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
         try:
             account_analysis = generate_account_ltv_analysis(cohort_table, user_breakdown_df, model)
             if account_analysis['analysis']:
-                analysis_para = doc.add_paragraph(account_analysis['analysis'])
+                cleaned_analysis = clean_text_for_word(account_analysis['analysis'])
+                analysis_para = doc.add_paragraph(cleaned_analysis)
                 analysis_para.style = 'Normal'
                 for run in analysis_para.runs:
                     run.font.size = Pt(11)
@@ -2053,9 +2511,11 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
     
     # Helper function to create tables
     def create_word_table(doc, data, title):
-        subheading = doc.add_heading(title, level=2)
-        subheading.runs[0].font.size = Pt(14)
-        subheading.runs[0].font.name = 'Calibri'
+        if title and title.strip():  # Only create heading if title is not empty
+            subheading = doc.add_heading(title, level=2)
+            if subheading.runs:  # Check if runs exist before accessing
+                subheading.runs[0].font.size = Pt(14)
+                subheading.runs[0].font.name = 'Calibri'
         
         table = doc.add_table(rows=len(data), cols=len(data[0]))
         table.style = 'Table Grid'
@@ -2065,15 +2525,19 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
         header_cells = table.rows[0].cells
         for i, header in enumerate(data[0]):
             header_cells[i].text = str(header)
-            header_cells[i].paragraphs[0].runs[0].bold = True
-            header_cells[i].paragraphs[0].runs[0].font.size = Pt(10)
+            # Apply formatting if runs exist
+            if header_cells[i].paragraphs[0].runs:
+                header_cells[i].paragraphs[0].runs[0].bold = True
+                header_cells[i].paragraphs[0].runs[0].font.size = Pt(10)
         
         # Data rows
         for row_idx, row_data in enumerate(data[1:], 1):
             row_cells = table.rows[row_idx].cells
             for col_idx, cell_data in enumerate(row_data):
                 row_cells[col_idx].text = str(cell_data)
-                row_cells[col_idx].paragraphs[0].runs[0].font.size = Pt(9)
+                # Apply formatting if runs exist
+                if row_cells[col_idx].paragraphs[0].runs:
+                    row_cells[col_idx].paragraphs[0].runs[0].font.size = Pt(9)
         
         doc.add_paragraph()  # Add space after table
     
@@ -2130,7 +2594,8 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
         try:
             tables_analysis = generate_top_products_table_explanation(top_products_data, model)
             if tables_analysis['analysis']:
-                portfolio_para = doc.add_paragraph(tables_analysis['analysis'])
+                cleaned_analysis = clean_text_for_word(tables_analysis['analysis'])
+                portfolio_para = doc.add_paragraph(cleaned_analysis)
                 portfolio_para.style = 'Normal'
                 for run in portfolio_para.runs:
                     run.font.size = Pt(11)
@@ -2153,41 +2618,46 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
     intro_para.style = 'Normal'
     
     # Get top 10 products by acquired customers for individual analysis
-    top_10_products = top_products_data['top_acquired'][:10]
+    top_10_products = top_products_data['top_acquired'][:10] if top_products_data.get('top_acquired') else []
     
-    for i, product in enumerate(top_10_products, 1):
-        product_sku = product['Merchant SKU']
-        product_title = product['Product Title']
-        
-        product_heading = doc.add_heading(f'3.{i} {product_title}', level=2)
-        product_heading.runs[0].font.size = Pt(14)
-        product_heading.runs[0].font.name = 'Calibri'
-        
-        sku_para = doc.add_paragraph(f"SKU: {product_sku}")
-        sku_para.style = 'Normal'
-        
-        # Generate individual product analysis
-        if client:
-            try:
-                product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
-                product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
-                
-                product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
-                if product_analysis['analysis']:
-                    analysis_para = doc.add_paragraph(product_analysis['analysis'])
-                    analysis_para.style = 'Normal'
-                    for run in analysis_para.runs:
-                        run.font.size = Pt(11)
-                        run.font.name = 'Calibri'
-            except Exception as e:
-                error_para = doc.add_paragraph(f"Analysis unavailable for {product_title}: {str(e)}")
-                error_para.style = 'Normal'
-        else:
-            placeholder_para = doc.add_paragraph("Individual product analysis is available when an OpenAI API key is provided.")
-            placeholder_para.style = 'Normal'
-        
-        if i < len(top_10_products):  # Don't add page break after last product
-            doc.add_page_break()
+    if not top_10_products:
+        no_products_para = doc.add_paragraph("No products found for individual analysis.")
+        no_products_para.style = 'Normal'
+    else:
+        for i, product in enumerate(top_10_products, 1):
+            product_sku = product['Merchant SKU']
+            product_title = product['Product Title']
+            
+            product_heading = doc.add_heading(f'3.{i} {product_title}', level=2)
+            product_heading.runs[0].font.size = Pt(14)
+            product_heading.runs[0].font.name = 'Calibri'
+            
+            sku_para = doc.add_paragraph(f"SKU: {product_sku}")
+            sku_para.style = 'Normal'
+            
+            # Generate individual product analysis
+            if client:
+                try:
+                    product_cohort_table, _ = calculate_cohort_analysis(raw_data, product_sku)
+                    product_user_breakdown = calculate_user_breakdown(raw_data, raw_data, product_sku)
+                    
+                    product_analysis = generate_product_ltv_analysis(product_sku, product_title, product_cohort_table, product_user_breakdown, model)
+                    if product_analysis['analysis']:
+                        cleaned_analysis = clean_text_for_word(product_analysis['analysis'])
+                        analysis_para = doc.add_paragraph(cleaned_analysis)
+                        analysis_para.style = 'Normal'
+                        for run in analysis_para.runs:
+                            run.font.size = Pt(11)
+                            run.font.name = 'Calibri'
+                except Exception as e:
+                    error_para = doc.add_paragraph(f"Analysis unavailable for {product_title}: {str(e)}")
+                    error_para.style = 'Normal'
+            else:
+                placeholder_para = doc.add_paragraph("Individual product analysis is available when an OpenAI API key is provided.")
+                placeholder_para.style = 'Normal'
+            
+            if i < len(top_10_products):  # Don't add page break after last product
+                doc.add_page_break()
     
     # 4. User Breakdown Analysis
     doc.add_page_break()
@@ -2195,20 +2665,167 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
     heading4.runs[0].font.size = Pt(16)
     heading4.runs[0].font.name = 'Calibri'
     
-    if client and user_breakdown_df is not None:
+    if user_breakdown_df is not None and not user_breakdown_df.empty:
+        # Add key metrics summary
+        metrics_heading = doc.add_heading('4.1 Key Metrics Summary', level=2)
+        metrics_heading.runs[0].font.size = Pt(14)
+        metrics_heading.runs[0].font.name = 'Calibri'
+        
+        total_new_users = user_breakdown_df['new_users'].sum()
+        total_returning_users = user_breakdown_df['old_users'].sum()
+        total_all_users = user_breakdown_df['all_users'].sum()
+        new_user_percentage = (total_new_users / total_all_users) * 100 if total_all_users > 0 else 0
+        avg_new_users_per_month = user_breakdown_df['new_users'].mean()
+        avg_returning_users_per_month = user_breakdown_df['old_users'].mean()
+        
+        # Create metrics table
+        metrics_data = [
+            ['Metric', 'Value'],
+            ['Total New Users', f"{total_new_users:,}"],
+            ['Total Returning Users', f"{total_returning_users:,}"],
+            ['Total Users', f"{total_all_users:,}"],
+            ['New User Percentage', f"{new_user_percentage:.1f}%"],
+            ['Avg New Users/Month', f"{avg_new_users_per_month:.0f}"],
+            ['Avg Returning Users/Month', f"{avg_returning_users_per_month:.0f}"]
+        ]
+        create_word_table(doc, metrics_data, '')
+        
+        # Add user breakdown chart
+        chart_heading = doc.add_heading('4.2 User Breakdown Visualization', level=2)
+        chart_heading.runs[0].font.size = Pt(14)
+        chart_heading.runs[0].font.name = 'Calibri'
+        
         try:
-            user_analysis = generate_user_breakdown_explanation(user_breakdown_df, model)
-            if user_analysis['analysis']:
-                user_para = doc.add_paragraph(user_analysis['analysis'])
-                user_para.style = 'Normal'
-                for run in user_para.runs:
-                    run.font.size = Pt(11)
-                    run.font.name = 'Calibri'
+            # Generate the user breakdown chart
+            print(f"🔍 DEBUG: Creating user breakdown chart for Word report...")
+            chart_fig = create_user_breakdown_chart(user_breakdown_df, "All")
+            
+            # Create temporary image file for the chart
+            chart_temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+            chart_temp_file.close()
+            
+            # Save chart as image
+            print(f"🔍 DEBUG: Attempting to export chart to {chart_temp_file.name} for Word report...")
+            chart_fig.write_image(chart_temp_file.name, width=800, height=500, scale=2)
+            print(f"🔍 DEBUG: Chart export for Word report successful!")
+            
+            # Add chart to document
+            chart_para = doc.add_paragraph()
+            chart_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = chart_para.runs[0] if chart_para.runs else chart_para.add_run()
+            run.add_picture(chart_temp_file.name, width=Inches(6.5))
+            print(f"🔍 DEBUG: Chart added to Word document successfully!")
+            
+            # Add space after chart
+            doc.add_paragraph()
+            
+            # Clean up temporary chart file
+            os.unlink(chart_temp_file.name)
+            
         except Exception as e:
-            error_para = doc.add_paragraph(f"User breakdown analysis unavailable: {str(e)}")
-            error_para.style = 'Normal'
+            print(f"🔍 DEBUG: Word chart export error: {str(e)}")
+            print(f"🔍 DEBUG: Error type: {type(e)}")
+            
+            # Provide detailed error message
+            if 'kaleido' in str(e).lower():
+                error_msg = f"Chart generation unavailable: Kaleido package error - {str(e)}. Please ensure kaleido is installed: pip install --upgrade kaleido"
+            else:
+                error_msg = f"Chart generation unavailable: {str(e)}"
+            
+            chart_error = doc.add_paragraph(error_msg)
+            chart_error.style = 'Normal'
+        
+        # Add user breakdown data table
+        table_heading = doc.add_heading('4.3 Detailed User Breakdown Data', level=2)
+        table_heading.runs[0].font.size = Pt(14)
+        table_heading.runs[0].font.name = 'Calibri'
+        
+        # Prepare table data
+        table_data = [['Month', 'Total Users', 'New Users', 'Returning Users', 'New User %', 'Returning User %']]
+        
+        for _, row in user_breakdown_df.iterrows():
+            month_str = row['month'].strftime('%Y-%m-%d') if hasattr(row['month'], 'strftime') else str(row['month'])
+            total_users = int(row['all_users'])
+            new_users = int(row['new_users'])
+            returning_users = int(row['old_users'])
+            new_pct = (new_users / total_users * 100) if total_users > 0 else 0
+            returning_pct = (returning_users / total_users * 100) if total_users > 0 else 0
+            
+            table_data.append([
+                month_str,
+                f"{total_users:,}",
+                f"{new_users:,}",
+                f"{returning_users:,}",
+                f"{new_pct:.1f}%",
+                f"{returning_pct:.1f}%"
+            ])
+        
+        create_word_table(doc, table_data, '')
+        
+        # Analysis insights
+        if len(user_breakdown_df) >= 2:
+            insights_heading = doc.add_heading('4.4 Analysis Insights', level=2)
+            insights_heading.runs[0].font.size = Pt(14)
+            insights_heading.runs[0].font.name = 'Calibri'
+            
+            recent_new_users = user_breakdown_df.tail(3)['new_users'].mean()
+            if len(user_breakdown_df) > 3:
+                earlier_new_users = user_breakdown_df.head(len(user_breakdown_df)-3)['new_users'].mean()
+            else:
+                # Safety check: make sure we have at least 1 row
+                if len(user_breakdown_df) >= 1:
+                    earlier_new_users = user_breakdown_df.head(1)['new_users'].iloc[0]
+                else:
+                    earlier_new_users = 0
+            
+            total_months = len(user_breakdown_df)
+            months_with_growth = len(user_breakdown_df[user_breakdown_df['new_users'] > user_breakdown_df['old_users']])
+            if len(user_breakdown_df) > 0:
+                best_month = user_breakdown_df.loc[user_breakdown_df['new_users'].idxmax()]
+            else:
+                best_month = {'month': 'N/A', 'new_users': 0}
+            
+            insights_text = f"""
+• Analysis covers {total_months} months of user acquisition data
+• {months_with_growth} out of {total_months} months showed more new users than returning users
+• Customer base composition: {new_user_percentage:.1f}% new users, {(100-new_user_percentage):.1f}% returning users
+• Best acquisition month: {best_month['month'].strftime('%Y-%m') if hasattr(best_month['month'], 'strftime') else str(best_month['month'])} with {best_month['new_users']:.0f} new users
+"""
+            
+            if earlier_new_users > 0:
+                new_user_trend = ((recent_new_users - earlier_new_users) / earlier_new_users) * 100
+                trend_direction = "increasing" if new_user_trend > 5 else "decreasing" if new_user_trend < -5 else "stable"
+                insights_text += f"• New user acquisition trend: {trend_direction} ({new_user_trend:+.1f}%)"
+            
+            insights_para = doc.add_paragraph(insights_text)
+            insights_para.style = 'Normal'
+            for run in insights_para.runs:
+                run.font.size = Pt(11)
+                run.font.name = 'Calibri'
+        
+        # Add AI analysis if available
+        if client:
+            try:
+                ai_heading = doc.add_heading('4.5 AI-Generated Analysis', level=2)
+                ai_heading.runs[0].font.size = Pt(14)
+                ai_heading.runs[0].font.name = 'Calibri'
+                
+                user_analysis = generate_user_breakdown_explanation(user_breakdown_df, model)
+                if user_analysis['analysis']:
+                    cleaned_analysis = clean_text_for_word(user_analysis['analysis'])
+                    user_para = doc.add_paragraph(cleaned_analysis)
+                    user_para.style = 'Normal'
+                    for run in user_para.runs:
+                        run.font.size = Pt(11)
+                        run.font.name = 'Calibri'
+            except Exception as e:
+                error_para = doc.add_paragraph(f"AI user breakdown analysis unavailable: {str(e)}")
+                error_para.style = 'Normal'
+        else:
+            ai_placeholder = doc.add_paragraph("AI-powered user breakdown analysis is available when an OpenAI API key is provided.")
+            ai_placeholder.style = 'Normal'
     else:
-        placeholder_para = doc.add_paragraph("User breakdown analysis is available when an OpenAI API key is provided and user breakdown data is available.")
+        placeholder_para = doc.add_paragraph("User breakdown analysis is unavailable - no user breakdown data provided.")
         placeholder_para.style = 'Normal'
     
     # Save document
@@ -2693,7 +3310,14 @@ def main():
                     # Calculate trends
                     if len(user_breakdown) >= 2:
                         recent_new_users = user_breakdown.tail(3)['new_users'].mean()
-                        earlier_new_users = user_breakdown.head(len(user_breakdown)-3)['new_users'].mean() if len(user_breakdown) > 3 else user_breakdown.head(1)['new_users'].iloc[0]
+                        if len(user_breakdown) > 3:
+                            earlier_new_users = user_breakdown.head(len(user_breakdown)-3)['new_users'].mean()
+                        else:
+                            # Safety check: make sure we have at least 1 row
+                            if len(user_breakdown) >= 1:
+                                earlier_new_users = user_breakdown.head(1)['new_users'].iloc[0]
+                            else:
+                                earlier_new_users = 0
                         
                         if earlier_new_users > 0:
                             new_user_trend = ((recent_new_users - earlier_new_users) / earlier_new_users) * 100
@@ -2936,10 +3560,17 @@ def main():
                 global client
                 if openai_api_key:
                     try:
-                        client = OpenAI(api_key=openai_api_key)
+                        # Clean the API key to remove any chat formatting or Unicode characters
+                        cleaned_api_key = clean_api_key(openai_api_key)
+                        print(f"🔍 DEBUG: Original API key length: {len(openai_api_key)}")
+                        print(f"🔍 DEBUG: Cleaned API key length: {len(cleaned_api_key)}")
+                        print(f"🔍 DEBUG: Cleaned API key starts with: {cleaned_api_key[:10]}...")
+                        
+                        client = OpenAI(api_key=cleaned_api_key)
                         st.success("✅ AI analysis enabled! Your report will include expert LTV insights for each product.")
                     except Exception as e:
                         st.error(f"❌ Error initializing OpenAI client: {str(e)}")
+                        print(f"🔍 DEBUG: OpenAI client initialization error: {e}")
                         client = None
                 else:
                     client = None
@@ -2961,9 +3592,17 @@ def main():
                 if st.button("🚀 Generate Comprehensive LTV Report", type="primary"):
                     with st.spinner("Generating comprehensive LTV report..."):
                         try:
+                            print("🔍 DEBUG: Starting comprehensive report generation")
+                            print(f"🔍 DEBUG: model_choice: {model_choice}")
+                            
                             # Calculate account-level cohort analysis and user breakdown for the comprehensive report
+                            print("🔍 DEBUG: About to calculate account cohort analysis")
                             account_cohort_table, _ = calculate_cohort_analysis(raw_data, "All")
+                            print(f"🔍 DEBUG: Account cohort table shape: {account_cohort_table.shape}")
+                            
+                            print("🔍 DEBUG: About to calculate account user breakdown")
                             account_user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, "All")
+                            print(f"🔍 DEBUG: Account user breakdown shape: {account_user_breakdown.shape}")
                             
                             # Generate the comprehensive PDF report
                             # pdf_path = generate_comprehensive_ltv_report(
@@ -2971,9 +3610,11 @@ def main():
                             # )
                             
                             # Generate the comprehensive Word report
+                            print("🔍 DEBUG: About to call generate_comprehensive_word_report")
                             word_path = generate_comprehensive_word_report(
                                 product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
                             )
+                            print(f"🔍 DEBUG: Word report generated successfully: {word_path}")
                             
                             # Read the PDF file
                             # with open(pdf_path, "rb") as pdf_file:
@@ -3019,6 +3660,17 @@ def main():
                             """)
                             
                         except Exception as e:
+                            print(f"🔍 DEBUG: ===== COMPREHENSIVE REPORT ERROR =====")
+                            print(f"🔍 DEBUG: ERROR in comprehensive report generation: {str(e)}")
+                            print(f"🔍 DEBUG: Error type: {type(e)}")
+                            import traceback
+                            print(f"🔍 DEBUG: Full traceback: {traceback.format_exc()}")
+                            
+                            # If it's a Unicode error, provide more details
+                            if 'ascii' in str(e).lower() and 'encode' in str(e).lower():
+                                print(f"🔍 DEBUG: This is a Unicode encoding error in comprehensive report generation")
+                                print(f"🔍 DEBUG: Error details: {repr(e)}")
+                            
                             st.error(f"❌ Error generating comprehensive report: {str(e)}")
                             st.info("Please ensure all data has been calculated successfully and try again.")
                             

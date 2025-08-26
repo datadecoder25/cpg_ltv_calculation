@@ -6,3 +6,4 @@ plotly>=5.0.0
 openai
 reportlab
 python-docx>=0.8.11
+kaleido==1.0.0
