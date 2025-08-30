@@ -40,51 +40,20 @@ def call_chat(system_prompt, prompt, model):
         st.error("OpenAI client not initialized. Please provide an API key.")
         return None, 0, 0
     
-    print(f"🔍 DEBUG: ===== CALL_CHAT FUNCTION CALLED =====")
-    print(f"🔍 DEBUG: Model: {model}")
-    print(f"🔍 DEBUG: System prompt length: {len(system_prompt) if system_prompt else 0}")
-    print(f"🔍 DEBUG: User prompt length: {len(prompt) if prompt else 0}")
-    
-    # Check for problematic characters before cleaning
-    if system_prompt and '\u202f' in system_prompt:
-        print(f"🔍 DEBUG: \\u202f found in ORIGINAL system prompt!")
-        pos = system_prompt.find('\u202f')
-        print(f"🔍 DEBUG: Position in system prompt: {pos}")
-        print(f"🔍 DEBUG: Context: {repr(system_prompt[max(0, pos-20):pos+20])}")
-    
-    if prompt and '\u202f' in prompt:
-        print(f"🔍 DEBUG: \\u202f found in ORIGINAL user prompt!")
-        pos = prompt.find('\u202f')
-        print(f"🔍 DEBUG: Position in user prompt: {pos}")
-        print(f"🔍 DEBUG: Context: {repr(prompt[max(0, pos-20):pos+20])}")
-    
     try:
         # Clean prompts to ensure safe encoding using comprehensive Unicode cleaning
-        print(f"🔍 DEBUG: Cleaning system prompt...")
         clean_system_prompt = clean_unicode_text(system_prompt)
-        print(f"🔍 DEBUG: Cleaning user prompt...")
         clean_user_prompt = clean_unicode_text(prompt)
-        
-        print(f"🔍 DEBUG: Cleaned system prompt length: {len(clean_system_prompt)}")
-        print(f"🔍 DEBUG: Cleaned user prompt length: {len(clean_user_prompt)}")
         
         # Additional safety check - try to encode as ASCII to catch any remaining issues
         try:
-            print(f"🔍 DEBUG: Testing ASCII encoding of cleaned prompts...")
             clean_system_prompt.encode('ascii')
             clean_user_prompt.encode('ascii')
-            print(f"🔍 DEBUG: ASCII encoding test PASSED")
         except UnicodeEncodeError as unicode_error:
-            print(f"🔍 DEBUG: ASCII encoding test FAILED: {unicode_error}")
-            print(f"🔍 DEBUG: Error in: {'system' if 'system' in str(unicode_error.object) else 'user'} prompt")
-            print(f"🔍 DEBUG: Problematic character at position {unicode_error.start}: {repr(unicode_error.object[unicode_error.start:unicode_error.end])}")
-            print(f"🔍 DEBUG: Context around error: {repr(unicode_error.object[max(0, unicode_error.start-10):unicode_error.end+10])}")
             # Apply even more aggressive cleaning
             clean_system_prompt = ''.join(char for char in clean_system_prompt if ord(char) < 128)
             clean_user_prompt = ''.join(char for char in clean_user_prompt if ord(char) < 128)
-            print(f"🔍 DEBUG: Applied brute force cleaning to both prompts")
         
-        print(f"🔍 DEBUG: About to call OpenAI API...")
         res = client.chat.completions.create(
             model=model,
             messages=[
@@ -92,20 +61,8 @@ def call_chat(system_prompt, prompt, model):
                 {"role": "user", "content": clean_user_prompt},
             ]
         )
-        print(f"🔍 DEBUG: OpenAI API call successful!")
         return res.choices[0].message.content
     except Exception as e:
-        print(f"🔍 DEBUG: ===== EXCEPTION IN CALL_CHAT =====")
-        print(f"🔍 DEBUG: Exception type: {type(e)}")
-        print(f"🔍 DEBUG: Exception message: {str(e)}")
-        print(f"🔍 DEBUG: Exception repr: {repr(e)}")
-        
-        # Try to identify which prompt has the issue
-        if 'ascii' in str(e).lower() and 'encode' in str(e).lower():
-            print(f"🔍 DEBUG: This is definitely a Unicode encoding error")
-            if hasattr(e, 'object'):
-                print(f"🔍 DEBUG: Error object: {repr(e.object[:100])}")
-        
         st.error(f"Error calling OpenAI API: {str(e)}")
         return None
 
@@ -1168,16 +1125,6 @@ def clean_api_key(api_key):
     
     import re
     
-    print(f"🔍 DEBUG: ===== CLEANING API KEY =====")
-    print(f"🔍 DEBUG: Original API key (first 50 chars): {repr(api_key[:50])}")
-    
-    # Check for problematic Unicode characters
-    if '\u202f' in api_key:
-        print(f"🔍 DEBUG: Found \\u202f in API key!")
-        pos = api_key.find('\u202f')
-        print(f"🔍 DEBUG: Position: {pos}")
-        print(f"🔍 DEBUG: Context: {repr(api_key[max(0, pos-20):pos+20])}")
-    
     # First, apply general Unicode cleaning
     cleaned = clean_unicode_text(api_key)
     
@@ -1193,15 +1140,9 @@ def clean_api_key(api_key):
         if matches:
             # Use the last/longest match found
             extracted_key = max(matches, key=len)
-            print(f"🔍 DEBUG: Extracted API key using pattern {pattern}")
-            print(f"🔍 DEBUG: Extracted key starts with: {extracted_key[:10]}...")
-            print(f"🔍 DEBUG: Extracted key length: {len(extracted_key)}")
             return extracted_key
     
     # If no pattern matches, fall back to cleaned text
-    print(f"🔍 DEBUG: No API key pattern found, using cleaned text")
-    print(f"🔍 DEBUG: Cleaned text starts with: {cleaned[:20]}...")
-    
     return cleaned
 
 def clean_unicode_text(text):
@@ -1214,14 +1155,6 @@ def clean_unicode_text(text):
     # Convert to string if not already
     original_text = str(text)
     text = original_text
-    
-    # Debug: Check for problematic characters in input
-    if '\u202f' in text:
-        print(f"🔍 DEBUG: Found \\u202f in input text: {repr(text[:100])}")
-        # Find position of the character
-        pos = text.find('\u202f')
-        print(f"🔍 DEBUG: \\u202f found at position {pos}")
-        print(f"🔍 DEBUG: Context around position: {repr(text[max(0, pos-10):pos+10])}")
     
     # Remove or replace problematic Unicode characters
     # Narrow no-break space and related characters
@@ -1245,72 +1178,224 @@ def clean_unicode_text(text):
     # Final safety check - brute force ASCII-only approach
     try:
         text.encode('ascii')
-    except UnicodeEncodeError as e:
-        print(f"🔍 DEBUG: Unicode error STILL present after cleaning: {e}")
-        print(f"🔍 DEBUG: Problematic text after cleaning: {repr(text[max(0, e.start-10):e.end+10])}")
+    except UnicodeEncodeError:
         # If still problematic, use brute force approach
         text = ''.join(char for char in text if ord(char) < 128)
-        print(f"🔍 DEBUG: Applied brute force cleaning")
     
     # Clean up excessive whitespace
     text = re.sub(r'\s+', ' ', text)
     
-    final_text = text.strip()
-    
-    # Debug final check
-    if '\u202f' in final_text:
-        print(f"🔍 DEBUG: ERROR - \\u202f STILL present in final text!")
-    
-    return final_text
+    return text.strip()
 
 def safe_dataframe_to_string(df, index=True):
     """Safely convert DataFrame to string, removing problematic Unicode characters"""
     if df is None or df.empty:
         return "No data available"
     
-    print(f"🔍 DEBUG: ===== SAFE_DATAFRAME_TO_STRING =====")
-    print(f"🔍 DEBUG: DataFrame shape: {df.shape}")
-    print(f"🔍 DEBUG: DataFrame columns: {list(df.columns)}")
-    
-    # Check for Unicode in DataFrame before conversion
-    for col in df.columns:
-        if df[col].dtype == 'object':  # Check text columns
-            for idx, value in df[col].items():
-                if value and '\u202f' in str(value):
-                    print(f"🔍 DEBUG: \\u202f found in DataFrame column '{col}', row {idx}: {repr(value)}")
-    
     # Convert DataFrame to string
     df_string = df.to_string(index=index)
     
-    print(f"🔍 DEBUG: DataFrame string length: {len(df_string)}")
-    if '\u202f' in df_string:
-        print(f"🔍 DEBUG: \\u202f found in DataFrame string after to_string()!")
-        pos = df_string.find('\u202f')
-        print(f"🔍 DEBUG: Position: {pos}")
-        print(f"🔍 DEBUG: Context: {repr(df_string[max(0, pos-20):pos+20])}")
-    
     # Apply comprehensive Unicode cleaning
-    cleaned_string = clean_unicode_text(df_string)
-    print(f"🔍 DEBUG: Cleaned string length: {len(cleaned_string)}")
+    return clean_unicode_text(df_string)
+
+def extract_ltv_metrics_from_cohort(cohort_data):
+    """Extract specific LTV metrics from cohort data for AI analysis"""
+    if cohort_data is None or cohort_data.empty:
+        return {
+            'ltv_12_month': 'N/A',
+            'ltv_6_month': 'N/A',
+            'ltv_3_month': 'N/A',
+            'first_aov_12_m': 'N/A',
+            'first_aov_6_m': 'N/A',
+            'first_aov_3_m': 'N/A',
+            'ltv_to_aov_multiplier_12_m': 'N/A',
+            'ltv_to_aov_multiplier_6_m': 'N/A',
+            'ltv_to_aov_multiplier_3_m': 'N/A',
+            'cohort_size_12_month': 'N/A',
+            'cohort_size_6_month': 'N/A',
+            'cohort_size_3_month': 'N/A',
+        }
     
-    return cleaned_string
+    try:
+        print(f"🔍 METRICS DEBUG: ===== EXTRACTING LTV METRICS =====")
+        print(f"🔍 METRICS DEBUG: Cohort data shape: {cohort_data.shape}")
+        print(f"🔍 METRICS DEBUG: Cohort data columns: {list(cohort_data.columns)}")
+        print(f"🔍 METRICS DEBUG: Available metrics: {cohort_data['Metric'].unique().tolist() if 'Metric' in cohort_data.columns else 'No Metric column'}")
+        
+        # Get available cohorts
+        unique_cohorts = sorted(cohort_data['POME Month'].unique()) if 'POME Month' in cohort_data.columns else []
+        print(f"🔍 METRICS DEBUG: Available cohorts: {unique_cohorts}")
+        print(f"🔍 METRICS DEBUG: Total cohorts available: {len(unique_cohorts)}")
+        
+        if not unique_cohorts:
+            print(f"🔍 METRICS DEBUG: ERROR - No POME Month data found")
+            return {'error': 'No cohort data available'}
+        
+        # Select cohorts for analysis (ensuring we have enough)
+        if len(unique_cohorts) < 9:
+            print(f"🔍 METRICS DEBUG: WARNING - Not enough cohorts for full analysis (need at least 9, have {len(unique_cohorts)})")
+            # Adjust indices based on available cohorts
+            twelve_cohort_month = unique_cohorts[0]  # First cohort
+            six_month_cohort_month = unique_cohorts[min(5, len(unique_cohorts)-1)]   # 6th or last available
+            three_month_cohort_month = unique_cohorts[min(8, len(unique_cohorts)-1)] # 9th or last available
+        else:
+            twelve_cohort_month = unique_cohorts[0]  # First cohort (12 months of data)
+            six_month_cohort_month = unique_cohorts[5]   # 6th cohort (6 months of data)
+            three_month_cohort_month = unique_cohorts[8] # 9th cohort (3 months of data)
+        
+        print(f"🔍 METRICS DEBUG: Selected cohorts:")
+        print(f"🔍 METRICS DEBUG: - 12-month cohort: {twelve_cohort_month}")
+        print(f"🔍 METRICS DEBUG: - 6-month cohort: {six_month_cohort_month}")
+        print(f"🔍 METRICS DEBUG: - 3-month cohort: {three_month_cohort_month}")
+        
+        # Get month columns for reference
+        month_columns = [col for col in cohort_data.columns if col not in ['POME Month', 'Cohort Size', 'Metric', 'Total']]
+        month_columns = [col for col in month_columns if pd.notna(col)]
+        month_columns = sorted(month_columns)
+        print(f"🔍 METRICS DEBUG: Available month columns: {month_columns}")
+        print(f"🔍 METRICS DEBUG: Latest month column: {month_columns[-1] if month_columns else 'None'}")
+        
+        # Get LTV rows for each cohort
+        ltv_row_12_month = cohort_data[(cohort_data['POME Month'] == twelve_cohort_month) & (cohort_data['Metric'] == 'LTV')]
+        ltv_row_6_month = cohort_data[(cohort_data['POME Month'] == six_month_cohort_month) & (cohort_data['Metric'] == 'LTV')]
+        ltv_row_3_month = cohort_data[(cohort_data['POME Month'] == three_month_cohort_month) & (cohort_data['Metric'] == 'LTV')]
+        
+        print(f"🔍 METRICS DEBUG: LTV row shapes - 12m: {ltv_row_12_month.shape}, 6m: {ltv_row_6_month.shape}, 3m: {ltv_row_3_month.shape}")
+        
+        if ltv_row_12_month.empty:
+            print(f"🔍 METRICS DEBUG: ERROR - No LTV data for 12-month cohort {twelve_cohort_month}")
+        if ltv_row_6_month.empty:
+            print(f"🔍 METRICS DEBUG: ERROR - No LTV data for 6-month cohort {six_month_cohort_month}")
+        if ltv_row_3_month.empty:
+            print(f"🔍 METRICS DEBUG: ERROR - No LTV data for 3-month cohort {three_month_cohort_month}")
+            
+        if ltv_row_12_month.empty or ltv_row_6_month.empty or ltv_row_3_month.empty:
+            return {'error': 'Missing LTV data for required cohorts'}
+
+        # Extract cohort sizes
+        cohort_size_12m = ltv_row_12_month.iloc[0]['Cohort Size']
+        cohort_size_6m = ltv_row_6_month.iloc[0]['Cohort Size']
+        cohort_size_3m = ltv_row_3_month.iloc[0]['Cohort Size']
+        
+        print(f"🔍 METRICS DEBUG: Cohort sizes - 12m: {cohort_size_12m}, 6m: {cohort_size_6m}, 3m: {cohort_size_3m}")
+
+        # Extract LTV values from Total column
+        ltv_12_month = ltv_row_12_month.iloc[0]['Total']
+        ltv_6_month = ltv_row_6_month.iloc[0]['Total']
+        ltv_3_month = ltv_row_3_month.iloc[0]['Total']
+        
+        print(f"🔍 METRICS DEBUG: LTV values from Total column - 12m: {ltv_12_month}, 6m: {ltv_6_month}, 3m: {ltv_3_month}")
+
+        # Extract first AOV (LTV value where POME month = column name)
+        try:
+            aov_12_month = ltv_row_12_month.iloc[0][twelve_cohort_month]
+            print(f"🔍 METRICS DEBUG: ✅ First AOV 12m (column {twelve_cohort_month}): {aov_12_month}")
+        except KeyError:
+            print(f"🔍 METRICS DEBUG: ❌ Column {twelve_cohort_month} not found for 12m AOV")
+            aov_12_month = 'N/A'
+            
+        try:
+            aov_6_month = ltv_row_6_month.iloc[0][six_month_cohort_month]
+            print(f"🔍 METRICS DEBUG: ✅ First AOV 6m (column {six_month_cohort_month}): {aov_6_month}")
+        except KeyError:
+            print(f"🔍 METRICS DEBUG: ❌ Column {six_month_cohort_month} not found for 6m AOV")
+            aov_6_month = 'N/A'
+            
+        try:
+            aov_3_month = ltv_row_3_month.iloc[0][three_month_cohort_month]
+            print(f"🔍 METRICS DEBUG: ✅ First AOV 3m (column {three_month_cohort_month}): {aov_3_month}")
+        except KeyError:
+            print(f"🔍 METRICS DEBUG: ❌ Column {three_month_cohort_month} not found for 3m AOV")
+            aov_3_month = 'N/A'
+
+        # Extract LTV Ratio multipliers (from LTV Ratio row, latest month column)
+        latest_month = month_columns[-1] if month_columns else None
+        print(f"🔍 METRICS DEBUG: Using latest month column for LTV ratios: {latest_month}")
+        
+        try:
+            ltv_ratio_row_12m = cohort_data[(cohort_data['POME Month'] == twelve_cohort_month) & (cohort_data['Metric'] == 'LTV Ratio')]
+            ltv_ratio_row_6m = cohort_data[(cohort_data['POME Month'] == six_month_cohort_month) & (cohort_data['Metric'] == 'LTV Ratio')]
+            ltv_ratio_row_3m = cohort_data[(cohort_data['POME Month'] == three_month_cohort_month) & (cohort_data['Metric'] == 'LTV Ratio')]
+            
+            print(f"🔍 METRICS DEBUG: LTV Ratio row shapes - 12m: {ltv_ratio_row_12m.shape}, 6m: {ltv_ratio_row_6m.shape}, 3m: {ltv_ratio_row_3m.shape}")
+            
+            if not ltv_ratio_row_12m.empty and latest_month:
+                ltv_to_aov_multiplier_12_month = ltv_ratio_row_12m.iloc[0][latest_month]
+                print(f"🔍 METRICS DEBUG: ✅ LTV Ratio 12m: {ltv_to_aov_multiplier_12_month}")
+            else:
+                ltv_to_aov_multiplier_12_month = 'N/A'
+                print(f"🔍 METRICS DEBUG: ❌ No LTV Ratio data for 12m cohort")
+                
+            if not ltv_ratio_row_6m.empty and latest_month:
+                ltv_to_aov_multiplier_6_month = ltv_ratio_row_6m.iloc[0][latest_month]
+                print(f"🔍 METRICS DEBUG: ✅ LTV Ratio 6m: {ltv_to_aov_multiplier_6_month}")
+            else:
+                ltv_to_aov_multiplier_6_month = 'N/A'
+                print(f"🔍 METRICS DEBUG: ❌ No LTV Ratio data for 6m cohort")
+                
+            if not ltv_ratio_row_3m.empty and latest_month:
+                ltv_to_aov_multiplier_3_month = ltv_ratio_row_3m.iloc[0][latest_month]
+                print(f"🔍 METRICS DEBUG: ✅ LTV Ratio 3m: {ltv_to_aov_multiplier_3_month}")
+            else:
+                ltv_to_aov_multiplier_3_month = 'N/A'
+                print(f"🔍 METRICS DEBUG: ❌ No LTV Ratio data for 3m cohort")
+            
+        except Exception as ratio_error:
+            print(f"🔍 METRICS DEBUG: ERROR extracting LTV ratios: {ratio_error}")
+            ltv_to_aov_multiplier_12_month = 'N/A'
+            ltv_to_aov_multiplier_6_month = 'N/A'
+            ltv_to_aov_multiplier_3_month = 'N/A'
+        
+        metrics = {
+            'ltv_12_month': ltv_12_month,
+            'ltv_6_month': ltv_6_month,
+            'ltv_3_month': ltv_3_month,
+            'first_aov_12_m': aov_12_month,
+            'first_aov_6_m': aov_6_month,
+            'first_aov_3_m': aov_3_month,
+            'ltv_to_aov_multiplier_12_m': ltv_to_aov_multiplier_12_month,
+            'ltv_to_aov_multiplier_6_m': ltv_to_aov_multiplier_6_month,
+            'ltv_to_aov_multiplier_3_m': ltv_to_aov_multiplier_3_month,
+            'cohort_size_12_month': cohort_size_12m,
+            'cohort_size_6_month': cohort_size_6m,
+            'cohort_size_3_month': cohort_size_3m,
+        }
+        
+        print(f"🔍 METRICS DEBUG: ===== FINAL EXTRACTED METRICS =====")
+        for key, value in metrics.items():
+            print(f"🔍 METRICS DEBUG: {key}: {value}")
+        print(f"🔍 METRICS DEBUG: ===== EXTRACTION COMPLETE =====")
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"🔍 METRICS DEBUG: ===== EXTRACTION ERROR =====")
+        print(f"🔍 METRICS DEBUG: Error type: {type(e)}")
+        print(f"🔍 METRICS DEBUG: Error message: {str(e)}")
+        import traceback
+        print(f"🔍 METRICS DEBUG: Full traceback: {traceback.format_exc()}")
+        return {'error': f'Error extracting metrics: {str(e)}'}
 
 def generate_product_ltv_analysis(product_sku, product_title, cohort_data, user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM analysis for a specific product's LTV data"""
     
-    print(f"🔍 DEBUG: ===== GENERATE_PRODUCT_LTV_ANALYSIS =====")
-    print(f"🔍 DEBUG: Product SKU: {repr(product_sku)}")
-    print(f"🔍 DEBUG: Product Title: {repr(product_title)}")
-    print(f"🔍 DEBUG: Cohort data shape: {cohort_data.shape if cohort_data is not None else 'None'}")
-    
-    # Check for Unicode in input parameters
-    if product_sku and '\u202f' in str(product_sku):
-        print(f"🔍 DEBUG: \\u202f found in product_sku!")
-    if product_title and '\u202f' in str(product_title):
-        print(f"🔍 DEBUG: \\u202f found in product_title!")
+    cohort_metrics = extract_ltv_metrics_from_cohort(cohort_data)
+    first_order_aov_12_months = cohort_metrics['first_aov_12_m']
+    twelve_month_ltv = cohort_metrics['ltv_12_month']
+    twelve_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_12_m']
+    first_order_aov_6_months = cohort_metrics['first_aov_6_m']
+    six_month_ltv = cohort_metrics['ltv_6_month']
+    six_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_6_m']
+    first_order_aov_3_months = cohort_metrics['first_aov_3_m']  
+    three_month_ltv = cohort_metrics['ltv_3_month']
+    three_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_3_m']
+    cohort_size_12_month = cohort_metrics['cohort_size_12_month']
+    cohort_size_6_month = cohort_metrics['cohort_size_6_month']
+    cohort_size_3_month = cohort_metrics['cohort_size_3_month']
+
     
     # System prompt with the theory and instructions
-    system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
+    system_prompt = f"""You are an experienced CMO and analytics lead for CPG brands. 
     Read the attached cohort LTV data table and produce a concise, executive-ready report. 
     Follow every instruction below precisely. 
 
@@ -1325,16 +1410,26 @@ Output structure (use these section headings)
     Title: LTV Review — Account Level (User Lifecycle Analysis)
     Executive Summary (bullets, 5–8 lines max)
 
-    What to compute & how (be explicit and show the key numbers only)
-    •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
-    •	LTV multiple vs first order: For each analyzed cohort, compute LTV at horizon ÷ First-Order AOV. Present as X× (e.g., 3.2×).
-    •	Repeaters & repeat rate: You can get how many NTB customers (cohort size = Active Customers at ``) repeat in subsequent months from row “Active Customers” and the percentage of repeat from row “Retention Rate” of the original cohort. Summarize rather than listing every month.
+    cohort_size_12m = {cohort_size_12_month}
+    first_order_aov_12m = {first_order_aov_12_months}
+    12 month LTV = {twelve_month_ltv}
+    12 month LTV to first month AOV Ratio = {twelve_month_ltv_ratio}
+
+    cohort_size_6m = {cohort_size_6_month}
+    first_order_aov_6m = {first_order_aov_6_months}
+    6 month LTV = {six_month_ltv}
+    6 month LTV to first month AOV Ratio = {six_month_ltv_ratio}
+
+    cohort_size_3m = {cohort_size_3_month}
+    first_order_aov_3m = {first_order_aov_3_months}
+    3 month LTV = {three_month_ltv}
+    3 month LTV to first month AOV Ratio = {three_month_ltv_ratio}   
 
     Cohort walk-throughs (exactly how to pick them)
     Find and discuss three cohorts:
-    1.	12-Month Cohort: The earliest cohort that has data from P0 through \*\* (or if months are 0–11)**.
-    2.	6-Month Cohort: The most recent cohort with at least `` filled.
-    3.	3-Month Cohort: The most recent cohort with at least `` filled.
+    1.	12-Month Cohort
+    2.	6-Month Cohort
+    3.	3-Month Cohort
     For each cohort, cover these points (short paragraph + 3–5 bullets):
     •	NTB size: total unique NTBs in P0 (the cohort size).
     •	Repeat behavior: how many of them repeated over the window and the % of the original cohort; call out any strong months or drop-offs.
@@ -1345,19 +1440,19 @@ Output structure (use these section headings)
     Benchmark check (use this JSON)
     Compare the 12-month account-level LTV multiple (not 6- or 3-month) to the first-order AOV against these category benchmarks. If you know the brand’s category, use it; if not, choose the closest match and say which you used.
     [
-    {"category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5},
-    {"category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9},
-    {"category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10},
-    {"category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7},
-    {"category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
-    {"category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8},
-    {"category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
-    {"category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12},
-    {"category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6},
-    {"category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5}
+    "category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5,
+    "category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9,
+    "category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10,
+    "category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7,
+    "category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9,
+    "category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8,
+    "category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9,
+    "category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12,
+    "category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6,
+    "category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5
     ]
     How to state it:
     “12-mo LTV multiple = 3.2× vs first-order AOV. For [Chosen Category], that sits in the healthy range (2.5–4.0×) and below elite (≥4.0×).”
@@ -1388,15 +1483,9 @@ Output structure (use these section headings)
 """
 
     # Create user prompt with the actual data
-    print(f"🔍 DEBUG: About to create user prompt...")
-    
     cleaned_title = clean_unicode_text(product_title)
     cleaned_sku = clean_unicode_text(product_sku)
     cohort_string = safe_dataframe_to_string(cohort_data)
-    
-    print(f"🔍 DEBUG: Cleaned title: {repr(cleaned_title)}")
-    print(f"🔍 DEBUG: Cleaned SKU: {repr(cleaned_sku)}")
-    print(f"🔍 DEBUG: Cohort string length: {len(cohort_string)}")
     
     user_prompt = f"""Analyze the LTV performance for this product:
 
@@ -1408,15 +1497,7 @@ COHORT ANALYSIS DATA:
 
 Focus on actionable insights with clear formatting, bullet points, and professional structure suitable for executive presentations."""
 
-    print(f"🔍 DEBUG: Created user prompt, length: {len(user_prompt)}")
-    if '\u202f' in user_prompt:
-        print(f"🔍 DEBUG: \\u202f found in FINAL user prompt!")
-        pos = user_prompt.find('\u202f')
-        print(f"🔍 DEBUG: Position: {pos}")
-        print(f"🔍 DEBUG: Context: {repr(user_prompt[max(0, pos-20):pos+20])}")
-
     # Call the LLM
-    print(f"🔍 DEBUG: About to call LLM for product analysis...")
     analysis = call_chat(clean_unicode_text(system_prompt), user_prompt, model)
     
     return {
@@ -1426,8 +1507,7 @@ Focus on actionable insights with clear formatting, bullet points, and professio
 def generate_top_products_table_explanation(top_products_data, model="gpt-4o-mini"):
     """Generate LLM explanation for the top 10 products tables"""
     
-    print(f"🔍 DEBUG: ===== GENERATE_TOP_PRODUCTS_TABLE_EXPLANATION =====")
-    print(f"🔍 DEBUG: Top products data keys: {list(top_products_data.keys())}")
+
     
     system_prompt = """You are an experienced e-commerce analyst. Analyze the top 10 product performance tables and provide clear, actionable insights.
 
@@ -1481,8 +1561,7 @@ Provide strategic insights and recommendations based on these rankings."""
 def generate_user_breakdown_explanation(user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM explanation for user breakdown analysis"""
     
-    print(f"🔍 DEBUG: ===== GENERATE_USER_BREAKDOWN_EXPLANATION =====")
-    print(f"🔍 DEBUG: User breakdown data shape: {user_breakdown_data.shape if user_breakdown_data is not None else 'None'}")
+
     
     system_prompt = """You are an experienced customer analytics specialist. Analyze the new vs old user breakdown data and provide clear insights about customer acquisition and retention patterns.
 
@@ -1521,21 +1600,30 @@ Provide insights about customer acquisition patterns, retention trends, and busi
 def generate_account_ltv_analysis(cohort_data, user_breakdown_data, model="gpt-4o-mini"):
     """Generate LLM analysis for account-level LTV data"""
     
-    print(f"🔍 DEBUG: ===== GENERATE_ACCOUNT_LTV_ANALYSIS =====")
-    print(f"🔍 DEBUG: Cohort data shape: {cohort_data.shape if cohort_data is not None else 'None'}")
-    print(f"🔍 DEBUG: User breakdown data shape: {user_breakdown_data.shape if user_breakdown_data is not None else 'None'}")
-    
+
+
+    try:
+        cohort_metrics = extract_ltv_metrics_from_cohort(cohort_data)
+        first_order_aov_12_months = cohort_metrics['first_aov_12_m']
+        twelve_month_ltv = cohort_metrics['ltv_12_month']
+        twelve_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_12_m']
+        first_order_aov_6_months = cohort_metrics['first_aov_6_m']
+        six_month_ltv = cohort_metrics['ltv_6_month']
+        six_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_6_m']
+        first_order_aov_3_months = cohort_metrics['first_aov_3_m']  
+        three_month_ltv = cohort_metrics['ltv_3_month']
+        three_month_ltv_ratio = cohort_metrics['ltv_to_aov_multiplier_3_m']
+        cohort_size_12_month = cohort_metrics['cohort_size_12_month']
+        cohort_size_6_month = cohort_metrics['cohort_size_6_month']
+        cohort_size_3_month = cohort_metrics['cohort_size_3_month']
+    except Exception as e:
+        print("Error in generate_account_ltv_analysis:", e)
     # System prompt with the theory and instructions
-    system_prompt = """You are an experienced CMO and analytics lead for CPG brands. 
+    system_prompt = f"""You are an experienced CMO and analytics lead for CPG brands. 
     Read the attached cohort LTV data table and produce a concise, executive-ready report. 
     Follow every instruction below precisely. 
 
 Your task is to analyze account-level LTV data and provide insights following this framework:
-
-What you have
-•	An account-level cohort table (CSV) with a column and monthly period columns (e.g., = month of entry, then P1 … P12).
-•	The Metric column includes exactly these rows (case-insensitive match): Active Customers, Quantities, Orders, Revenue, Retention Rate, LTV.
-•	If any row is missing, state that clearly and proceed using what’s available.
 
 Output structure (use these section headings)
     Title: LTV Review — Account Level (User Lifecycle Analysis)
@@ -1550,16 +1638,23 @@ Output structure (use these section headings)
 
     # Note: Educational content about LTV has been moved to the report as a standalone section
 
-    
-    What to compute & how (be explicit and show the key numbers only)
-    •	First-Order AOV (Account-level): It’s the value in the LTV row from the cohort’s first column or the P0 month for the same cohort. Call it First-Order AOV.
-    •	LTV multiple vs first order: For each analyzed cohort, use the LTV ratio Metric in the table for each cohort.
-    •	Repeaters & repeat rate: You can get how many NTB customers (cohort size = Active Customers at ``) repeat in subsequent months from row “Active Customers” and the percentage of repeat from row “Retention Rate” of the original cohort. Summarize rather than listing every month.
+    first_order_aov_12_months = {first_order_aov_12_months}
+    12 month LTV = {twelve_month_ltv}
+    12 month LTV to first month AOV Ratio = {twelve_month_ltv_ratio}
+    cohort_size_12m = {cohort_size_12_month}
+    first_order_aov_6_months = {first_order_aov_6_months}
+    6 month LTV = {six_month_ltv}
+    6 month LTV to first month AOV Ratio = {six_month_ltv_ratio}
+    cohort_size_6m = {cohort_size_6_month}
+    first_order_aov_3_months = {first_order_aov_3_months}
+    3 month LTV = {three_month_ltv}
+    3 month LTV to first month AOV Ratio = {three_month_ltv_ratio}
+    cohort_size_3m = {cohort_size_3_month}
 
     Cohort walk-throughs (exactly how to pick them)
     12-Month Cohort Analysis
     Thoroughly review the first POME month data set across all 6 metrics, Active Customers, Quantities, Orders, Revenue, Retention Rate, and LTV, covering a 12-month account-level window. The report should include the following:
-    •	Total number of unique NTBs acquired in the P0 month.
+    •	Total number of unique NTBs acquired in the P0 month, which is the cohort size
     •	Repeat behavior across months:
     Track how many of these customers returned in each subsequent month, P1, P2, P3, P6, P12. Report the repeat rate (%) month by month and identify any noticeable patterns. Did the repeat rate drop sharply? If so, after which month? Was the drop-off consistent, or did it stabilize? Based on this, assess whether the repeat purchase behavior is front-loaded.
     •	Performance contribution:
@@ -1570,7 +1665,7 @@ Output structure (use these section headings)
 
     6-Month Cohort Analysis
     Repeat the same structure for the first POME month of the 6-month cohort:
-    •	Total unique NTBs in the P0 month.
+    •	Total unique NTBs in the P0 month,which is the cohort size
     •	Repeat rate month by month:
     Detail how many NTBs repeated in P1, P2, P3, and P6, with their respective percentages. Comment on when the repeat rate drops sharply, if at all, and whether the pattern suggests front-loaded behavior.
     •	Performance impact:
@@ -1580,7 +1675,7 @@ Output structure (use these section headings)
 
     3-Month Cohort Analysis
     Again, apply the same reporting logic to the 3-month cohort:
-    •	Total NTBs in the P0 month.
+    •	Total NTBs in the P0 month, which is the cohort size
     •	Retention trends:
     Explain how many repeated in P1, P2, and P3, along with percentages. Analyze if and when the drop-offs happen and whether the repeat pattern is front-loaded.
     •	Performance outcomes:
@@ -1591,19 +1686,19 @@ Output structure (use these section headings)
 
     Compare the 12-month account-level LTV multiple (not 6- or 3-month) to the first-order AOV against these category benchmarks. If you know the brand’s category, use it; if not, choose the closest match and say which you used.
     [
-    {"category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5},
-    {"category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9},
-    {"category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10},
-    {"category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7},
-    {"category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
-    {"category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8},
-    {"category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9},
-    {"category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10},
-    {"category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12},
-    {"category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6},
-    {"category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5}
+    "category":"Snacks / pantry","cadence":"3–6 orders/yr","healthy_min_x":2.5,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":5,
+    "category":"Supplements (caps/gummies)","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":9,
+    "category":"Sports nutrition (protein, pre-/post-)","cadence":"6–10 orders/yr","healthy_min_x":4,"healthy_max_x":8,"elite_min_x":8,"elite_max_x":10,
+    "category":"Coffee / tea / pods","cadence":"monthly–bi-monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Hydration / greens powders","cadence":"monthly","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Beverages, RTD (shelf-stable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":7,
+    "category":"Beauty & personal care (consumable)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9,
+    "category":"Oral care (paste, brush heads)","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":5,"elite_min_x":5,"elite_max_x":8,
+    "category":"Household cleaning & laundry","cadence":"3–6 orders/yr","healthy_min_x":3,"healthy_max_x":6,"elite_min_x":6,"elite_max_x":9,
+    "category":"Pet consumables (food, treats, litter)","cadence":"4–8 orders/yr","healthy_min_x":4,"healthy_max_x":7,"elite_min_x":7,"elite_max_x":10,
+    "category":"Baby care (diapers, wipes, formula)","cadence":"8–12 orders/yr","healthy_min_x":5,"healthy_max_x":9,"elite_min_x":9,"elite_max_x":12,
+    "category":"Condiments & sauces","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":4,"elite_min_x":4,"elite_max_x":6,
+    "category":"Spices / baking","cadence":"2–4 orders/yr","healthy_min_x":2,"healthy_max_x":3.5,"elite_min_x":3.5,"elite_max_x":5
     ]
     How to state it:
     “12-mo LTV multiple = 3.2× vs first-order AOV. For [Chosen Category], that sits in the healthy range (2.5–4.0×) and below elite (≥4.0×).”
@@ -1700,14 +1795,7 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
         plotly.graph_objects.Figure: Plotly figure object
     """
     
-    # Test kaleido availability for image export
-    try:
-        import kaleido
-        print(f"🔍 DEBUG: Kaleido available - version: {getattr(kaleido, '__version__', 'unknown')}")
-    except ImportError as e:
-        print(f"🔍 DEBUG: Kaleido not available: {e}")
-    except Exception as e:
-        print(f"🔍 DEBUG: Kaleido import error: {e}")
+
     
     # Create stacked bar chart
     fig = go.Figure()
@@ -2178,20 +2266,14 @@ def generate_comprehensive_ltv_report(product_raw, raw_data, cohort_table, user_
             
             try:
                 # Try to save as image using kaleido
-                print(f"🔍 DEBUG: Attempting to export chart to {chart_temp_file.name}")
                 fig.write_image(chart_temp_file.name, format='png', width=800, height=500, scale=2)
-                print(f"🔍 DEBUG: Chart export successful!")
                 
                 from reportlab.platypus import Image
                 chart_image = Image(chart_temp_file.name, width=6*inch, height=3.75*inch)
                 elements.append(chart_image)
                 elements.append(Spacer(1, 20))
-                print(f"🔍 DEBUG: Chart added to PDF successfully!")
                 
             except Exception as e:
-                print(f"🔍 DEBUG: Chart export error: {str(e)}")
-                print(f"🔍 DEBUG: Error type: {type(e)}")
-                
                 # Check if it's a kaleido-specific error
                 if 'kaleido' in str(e).lower():
                     error_msg = f"Chart generation unavailable: Kaleido package error - {str(e)}"
@@ -2697,7 +2779,6 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
         
         try:
             # Generate the user breakdown chart
-            print(f"🔍 DEBUG: Creating user breakdown chart for Word report...")
             chart_fig = create_user_breakdown_chart(user_breakdown_df, "All")
             
             # Create temporary image file for the chart
@@ -2705,16 +2786,13 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
             chart_temp_file.close()
             
             # Save chart as image
-            print(f"🔍 DEBUG: Attempting to export chart to {chart_temp_file.name} for Word report...")
             chart_fig.write_image(chart_temp_file.name, width=800, height=500, scale=2)
-            print(f"🔍 DEBUG: Chart export for Word report successful!")
             
             # Add chart to document
             chart_para = doc.add_paragraph()
             chart_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = chart_para.runs[0] if chart_para.runs else chart_para.add_run()
             run.add_picture(chart_temp_file.name, width=Inches(6.5))
-            print(f"🔍 DEBUG: Chart added to Word document successfully!")
             
             # Add space after chart
             doc.add_paragraph()
@@ -2723,9 +2801,6 @@ def generate_comprehensive_word_report(product_raw, raw_data, cohort_table, user
             os.unlink(chart_temp_file.name)
             
         except Exception as e:
-            print(f"🔍 DEBUG: Word chart export error: {str(e)}")
-            print(f"🔍 DEBUG: Error type: {type(e)}")
-            
             # Provide detailed error message
             if 'kaleido' in str(e).lower():
                 error_msg = f"Chart generation unavailable: Kaleido package error - {str(e)}. Please ensure kaleido is installed: pip install --upgrade kaleido"
@@ -3562,15 +3637,10 @@ def main():
                     try:
                         # Clean the API key to remove any chat formatting or Unicode characters
                         cleaned_api_key = clean_api_key(openai_api_key)
-                        print(f"🔍 DEBUG: Original API key length: {len(openai_api_key)}")
-                        print(f"🔍 DEBUG: Cleaned API key length: {len(cleaned_api_key)}")
-                        print(f"🔍 DEBUG: Cleaned API key starts with: {cleaned_api_key[:10]}...")
-                        
                         client = OpenAI(api_key=cleaned_api_key)
                         st.success("✅ AI analysis enabled! Your report will include expert LTV insights for each product.")
                     except Exception as e:
                         st.error(f"❌ Error initializing OpenAI client: {str(e)}")
-                        print(f"🔍 DEBUG: OpenAI client initialization error: {e}")
                         client = None
                 else:
                     client = None
@@ -3592,29 +3662,14 @@ def main():
                 if st.button("🚀 Generate Comprehensive LTV Report", type="primary"):
                     with st.spinner("Generating comprehensive LTV report..."):
                         try:
-                            print("🔍 DEBUG: Starting comprehensive report generation")
-                            print(f"🔍 DEBUG: model_choice: {model_choice}")
-                            
                             # Calculate account-level cohort analysis and user breakdown for the comprehensive report
-                            print("🔍 DEBUG: About to calculate account cohort analysis")
                             account_cohort_table, _ = calculate_cohort_analysis(raw_data, "All")
-                            print(f"🔍 DEBUG: Account cohort table shape: {account_cohort_table.shape}")
-                            
-                            print("🔍 DEBUG: About to calculate account user breakdown")
                             account_user_breakdown = calculate_user_breakdown(raw_data, raw_data_wo_sku, "All")
-                            print(f"🔍 DEBUG: Account user breakdown shape: {account_user_breakdown.shape}")
-                            
-                            # Generate the comprehensive PDF report
-                            # pdf_path = generate_comprehensive_ltv_report(
-                            #     product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
-                            # )
                             
                             # Generate the comprehensive Word report
-                            print("🔍 DEBUG: About to call generate_comprehensive_word_report")
                             word_path = generate_comprehensive_word_report(
                                 product_raw, raw_data, account_cohort_table, account_user_breakdown, model_choice
                             )
-                            print(f"🔍 DEBUG: Word report generated successfully: {word_path}")
                             
                             # Read the PDF file
                             # with open(pdf_path, "rb") as pdf_file:
@@ -3660,17 +3715,6 @@ def main():
                             """)
                             
                         except Exception as e:
-                            print(f"🔍 DEBUG: ===== COMPREHENSIVE REPORT ERROR =====")
-                            print(f"🔍 DEBUG: ERROR in comprehensive report generation: {str(e)}")
-                            print(f"🔍 DEBUG: Error type: {type(e)}")
-                            import traceback
-                            print(f"🔍 DEBUG: Full traceback: {traceback.format_exc()}")
-                            
-                            # If it's a Unicode error, provide more details
-                            if 'ascii' in str(e).lower() and 'encode' in str(e).lower():
-                                print(f"🔍 DEBUG: This is a Unicode encoding error in comprehensive report generation")
-                                print(f"🔍 DEBUG: Error details: {repr(e)}")
-                            
                             st.error(f"❌ Error generating comprehensive report: {str(e)}")
                             st.info("Please ensure all data has been calculated successfully and try again.")
                             
