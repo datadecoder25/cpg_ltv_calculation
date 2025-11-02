@@ -1765,6 +1765,25 @@ def calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_merchant_sku=No
     else:
         filtered_data = raw_data_wo_sku.copy()
     
+    # Ensure consistent datetime format for month columns before processing
+    # This fixes inconsistent month formatting in the charts
+    
+    # Convert both month columns to consistent datetime format
+    try:
+        # Convert month column to datetime and then to first day of month
+        filtered_data['month'] = pd.to_datetime(filtered_data['month'])
+        filtered_data['month'] = filtered_data['month'].dt.to_period('M').dt.to_timestamp()
+        
+        # Convert pome_month column to datetime and then to first day of month  
+        filtered_data['pome_month'] = pd.to_datetime(filtered_data['pome_month'])
+        filtered_data['pome_month'] = filtered_data['pome_month'].dt.to_period('M').dt.to_timestamp()
+        
+    except Exception as e:
+        print(f"🔍 MONTH DEBUG: Error standardizing month format: {str(e)}")
+        # Fallback to original conversion
+        filtered_data['month'] = pd.to_datetime(filtered_data['month'])
+        filtered_data['pome_month'] = pd.to_datetime(filtered_data['pome_month'])
+    
     # Calculate new users (where pome_month equals month - first-time buyers)
     new_users_data = filtered_data[filtered_data['pome_month'] == filtered_data['month']].copy()
     new_users = new_users_data.groupby(['month']).agg({'users': 'sum'}).reset_index().rename(columns={'users': 'new_users'})
@@ -1777,8 +1796,9 @@ def calculate_user_breakdown(raw_data, raw_data_wo_sku, selected_merchant_sku=No
     combined_users['new_users'] = combined_users['new_users'].fillna(0)
     combined_users['old_users'] = combined_users['all_users'] - combined_users['new_users']
     
-    # Sort by month
+    # Ensure month is properly formatted as datetime (first day of month)
     combined_users['month'] = pd.to_datetime(combined_users['month'])
+    combined_users['month'] = combined_users['month'].dt.to_period('M').dt.to_timestamp()
     combined_users = combined_users.sort_values('month').reset_index(drop=True)
     
     return combined_users
@@ -1795,7 +1815,26 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
         plotly.graph_objects.Figure: Plotly figure object
     """
     
-
+    print(f"🔍 CHART DEBUG: ===== CREATING USER BREAKDOWN CHART =====")
+    print(f"🔍 CHART DEBUG: Input DataFrame shape: {user_breakdown_df.shape}")
+    print(f"🔍 CHART DEBUG: Month column dtype: {user_breakdown_df['month'].dtype}")
+    print(f"🔍 CHART DEBUG: Month column sample: {user_breakdown_df['month'].head(3).tolist()}")
+    
+    # Ensure month is properly formatted as datetime
+    chart_df = user_breakdown_df.copy()
+    try:
+        # Standardize month format to ensure consistent chart display
+        chart_df['month'] = pd.to_datetime(chart_df['month'])
+        chart_df['month'] = chart_df['month'].dt.to_period('M').dt.to_timestamp()
+        print(f"🔍 CHART DEBUG: Standardized month column sample: {chart_df['month'].head(3).tolist()}")
+    except Exception as e:
+        print(f"🔍 CHART DEBUG: Error standardizing month format: {str(e)}")
+        chart_df['month'] = pd.to_datetime(chart_df['month'])
+    
+    # Create consistent month labels for x-axis
+    month_labels = chart_df['month'].dt.strftime('%Y-%m').tolist()
+    print(f"🔍 CHART DEBUG: Month labels for chart: {month_labels}")
+    print(f"🔍 CHART DEBUG: ===== CREATING CHART WITH CATEGORICAL X-AXIS =====")
     
     # Create stacked bar chart
     fig = go.Figure()
@@ -1803,10 +1842,10 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     # Add new users bar
     fig.add_trace(go.Bar(
         name='New Users',
-        x=user_breakdown_df['month'].dt.strftime('%Y-%m'),
-        y=user_breakdown_df['new_users'],
+        x=month_labels,
+        y=chart_df['new_users'],
         marker_color='#2E86AB',  # Blue
-        text=user_breakdown_df['new_users'],
+        text=chart_df['new_users'],
         textposition='inside',
         texttemplate='%{text}',
         hovertemplate='<b>New Users</b><br>' +
@@ -1817,10 +1856,10 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
     # Add old users bar
     fig.add_trace(go.Bar(
         name='Returning Users',
-        x=user_breakdown_df['month'].dt.strftime('%Y-%m'),
-        y=user_breakdown_df['old_users'],
+        x=month_labels,
+        y=chart_df['old_users'],
         marker_color='#A23B72',  # Purple/Pink
-        text=user_breakdown_df['old_users'],
+        text=chart_df['old_users'],
         textposition='inside',
         texttemplate='%{text}',
         hovertemplate='<b>Returning Users</b><br>' +
@@ -1848,7 +1887,12 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
         ),
         margin=dict(t=80, b=40, l=40, r=40),
         plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)'
+        paper_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(
+            type='category',  # Force categorical x-axis to prevent date auto-formatting
+            categoryorder='array',
+            categoryarray=month_labels  # Use explicit order
+        )
     )
     
     # Style the axes
@@ -1856,7 +1900,8 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
         showgrid=True,
         gridwidth=1,
         gridcolor='rgba(128,128,128,0.2)',
-        tickangle=45
+        tickangle=45,
+        type='category'  # Ensure categorical display
     )
     
     fig.update_yaxes(
@@ -1864,6 +1909,9 @@ def create_user_breakdown_chart(user_breakdown_df, selected_sku):
         gridwidth=1,
         gridcolor='rgba(128,128,128,0.2)'
     )
+    
+    print(f"🔍 CHART DEBUG: ===== CHART CREATION COMPLETE =====")
+    print(f"🔍 CHART DEBUG: Chart x-axis type set to: category")
     
     return fig
 
@@ -3123,8 +3171,19 @@ def main():
                 
                 # Display cohort table with scrolling
                 st.subheader("User Lifecycle Analysis Results")
+                
+                # Clean cohort table for PyArrow compatibility
+                display_cohort_table = cohort_table.copy()
+                # Fill any NaN values to prevent PyArrow errors
+                display_cohort_table = display_cohort_table.fillna('')
+                
+                # Convert object columns with mixed types to string to prevent conversion errors
+                for col in display_cohort_table.columns:
+                    if display_cohort_table[col].dtype == 'object':
+                        display_cohort_table[col] = display_cohort_table[col].astype(str)
+                
                 st.dataframe(
-                    cohort_table, 
+                    display_cohort_table, 
                     use_container_width=True,
                     height=600  # Make it scrollable
                 )
@@ -3419,6 +3478,17 @@ def main():
                     # Add percentage columns
                     display_breakdown['New User %'] = ((display_breakdown['New Users'] / display_breakdown['Total Users']) * 100).round(1)
                     display_breakdown['Returning User %'] = ((display_breakdown['Returning Users'] / display_breakdown['Total Users']) * 100).round(1)
+                    
+                    # Clean data types to prevent PyArrow serialization errors
+                    display_breakdown = display_breakdown.fillna(0)  # Replace NaN with 0
+                    for col in display_breakdown.columns:
+                        if col != 'Month':  # Keep Month as string
+                            try:
+                                # Try to convert numeric columns properly
+                                if display_breakdown[col].dtype == 'object':
+                                    display_breakdown[col] = pd.to_numeric(display_breakdown[col], errors='coerce').fillna(0)
+                            except:
+                                pass
                     
                     st.dataframe(
                         display_breakdown,
