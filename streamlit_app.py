@@ -430,11 +430,17 @@ def calculate_cohort_analysis(raw_data, selected_merchant_sku=None):
             table_data.append(row_data)
     
     filled_table = pd.DataFrame(table_data)
-    
-    # Convert month columns to float
+
+    # Month columns and Total hold a mix of numeric values (ints for Active
+    # Customers / Quantities / Orders) and pre-formatted strings (e.g. "$1.23",
+    # "12.34%", "1.50x") written by the metric loops below. They must therefore
+    # use the permissive `object` dtype. Pandas 2.x silently upcast a float
+    # column to object on string assignment, but pandas 3.x raises TypeError
+    # ("Invalid value '$470.87' for dtype 'float64'"), so we set the dtype
+    # explicitly here instead of forcing float first.
     for month_col in month_columns:
-        filled_table[month_col] = filled_table[month_col].astype(float)
-    filled_table['Total'] = filled_table['Total'].astype(float)
+        filled_table[month_col] = filled_table[month_col].astype(object)
+    filled_table['Total'] = filled_table['Total'].astype(object)
     
     # Calculate metrics
     for idx, row in filled_table.iterrows():
@@ -3302,33 +3308,53 @@ def main():
                         if cumulative_ltv_table is not None and not cumulative_ltv_table.empty:
                             st.success("✅ Cumulative LTV Analysis calculated successfully!")
                             
+                            # `retention_calculation_v2` returns cells as pre-formatted
+                            # strings ("$33.63" or "" for empty), not floats. Parse them
+                            # back to numbers before computing the metrics, otherwise the
+                            # `isinstance(..., (int, float))` checks below silently drop
+                            # every value and the metrics always read "$0.00".
+                            def _parse_ltv_cell(cell):
+                                if isinstance(cell, (int, float)) and not isinstance(cell, bool):
+                                    val = float(cell)
+                                    return val if val > 0 else None
+                                if isinstance(cell, str):
+                                    s = cell.strip().lstrip('$').replace(',', '')
+                                    if not s:
+                                        return None
+                                    try:
+                                        val = float(s)
+                                    except ValueError:
+                                        return None
+                                    return val if val > 0 else None
+                                return None
+
                             # Display metrics for cumulative LTV
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 total_cohorts_ltv = len(cumulative_ltv_table)
                                 st.metric("Total Cohorts", total_cohorts_ltv)
                             with col2:
-                                # Find the highest cumulative LTV value
                                 numeric_cols_ltv = [col for col in cumulative_ltv_table.columns if col not in ['POME Month', 'Cohort Size']]
                                 max_ltv_values = []
                                 for _, row in cumulative_ltv_table.iterrows():
-                                    row_values = [row[col] for col in numeric_cols_ltv if isinstance(row[col], (int, float)) and row[col] > 0]
+                                    row_values = [v for v in (_parse_ltv_cell(row[col]) for col in numeric_cols_ltv) if v is not None]
                                     if row_values:
                                         max_ltv_values.append(max(row_values))
-                                
+
                                 if max_ltv_values:
                                     highest_ltv = max(max_ltv_values)
                                     st.metric("Highest Cumulative LTV", f"${highest_ltv:.2f}")
                                 else:
                                     st.metric("Highest Cumulative LTV", "$0.00")
                             with col3:
-                                # Calculate average final LTV (last non-empty value for each cohort)
                                 final_ltv_values = []
                                 for _, row in cumulative_ltv_table.iterrows():
-                                    row_values = [row[col] for col in reversed(numeric_cols_ltv) if isinstance(row[col], (int, float)) and row[col] > 0]
-                                    if row_values:
-                                        final_ltv_values.append(row_values[0])  # First non-zero from the right (latest month)
-                                
+                                    for col in reversed(numeric_cols_ltv):
+                                        parsed = _parse_ltv_cell(row[col])
+                                        if parsed is not None:
+                                            final_ltv_values.append(parsed)
+                                            break
+
                                 if final_ltv_values:
                                     avg_final_ltv = sum(final_ltv_values) / len(final_ltv_values)
                                     st.metric("Avg Final LTV", f"${avg_final_ltv:.2f}")
